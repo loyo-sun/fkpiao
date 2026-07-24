@@ -72,14 +72,13 @@ label:has(input:focus-visible) {
 .brand-mark {
   width: 38px;
   height: 38px;
-  display: grid;
-  place-items: center;
   border-radius: 11px;
-  color: white;
-  font-size: 18px;
-  font-weight: 700;
-  background: var(--green);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+  display: block;
+  object-fit: cover;
+  background: #fff9e9;
+  box-shadow:
+    inset 0 0 0 1px rgba(29, 90, 67, 0.08),
+    0 3px 8px rgba(36, 49, 41, 0.1);
 }
 
 .brand strong,
