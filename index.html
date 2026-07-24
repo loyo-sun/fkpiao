@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="完全在浏览器本地运行的发票双拼排版与 PDF 导出工具"
+    />
+    <title>发克票 · 本地发票排版</title>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="#" aria-label="发克票首页">
+          <span class="brand-mark" aria-hidden="true">发</span>
+          <span>
+            <strong>发克票</strong>
+            <small>LOCAL INVOICE STUDIO</small>
+          </span>
+        </a>
+        <div class="privacy-pill">
+          <span class="privacy-dot" aria-hidden="true"></span>
+          文件仅在本地处理
+        </div>
+      </header>
+
+      <main class="workspace">
+        <aside class="panel file-panel" aria-label="发票文件">
+          <div class="panel-heading">
+            <div>
+              <span class="eyebrow">01 / 文件</span>
+              <h1>发票列表</h1>
+            </div>
+            <span class="count-badge" id="fileCount">2</span>
+          </div>
+
+          <label class="dropzone" id="dropzone" for="fileInput">
+            <input id="fileInput" type="file" accept="application/pdf,.pdf" multiple />
+            <span class="upload-icon" aria-hidden="true">＋</span>
+            <strong>选择 PDF 发票</strong>
+            <span>或拖拽多个文件到这里</span>
+          </label>
+
+          <div class="file-summary">
+            <span>当前队列</span>
+            <button class="text-button" id="clearButton" type="button">清空</button>
+          </div>
+          <ul class="file-list" id="fileList" aria-live="polite"></ul>
+
+          <div class="local-note">
+            <span aria-hidden="true">◎</span>
+            <p><strong>隐私优先</strong>文件不会上传，也不会离开这台设备。</p>
+          </div>
+        </aside>
+
+        <section class="preview-panel" aria-label="排版预览">
+          <div class="preview-toolbar">
+            <div>
+              <span class="eyebrow">02 / 预览</span>
+              <h2>A4 双拼排版</h2>
+            </div>
+            <div class="page-nav" aria-label="翻页">
+              <button id="prevButton" type="button" aria-label="上一页">←</button>
+              <span><b id="currentPage">1</b> / <span id="totalPages">1</span></span>
+              <button id="nextButton" type="button" aria-label="下一页">→</button>
+            </div>
+          </div>
+
+          <div class="paper-stage" id="paperStage">
+            <div class="paper-wrap">
+              <canvas id="previewCanvas" width="794" height="1123" aria-label="A4 排版预览"></canvas>
+              <div class="paper-label">A4</div>
+            </div>
+          </div>
+          <p class="preview-caption">每页上下各放置 1 张发票，自动等比缩放并居中</p>
+        </section>
+
+        <aside class="panel export-panel" aria-label="导出配置">
+          <div class="panel-heading">
+            <div>
+              <span class="eyebrow">03 / 导出</span>
+              <h2>导出配置</h2>
+            </div>
+          </div>
+
+          <fieldset class="mode-fieldset">
+            <legend>颜色模式</legend>
+            <label class="mode-card">
+              <input type="radio" name="colorMode" value="color" checked />
+              <span class="mode-swatch color-swatch" aria-hidden="true"></span>
+              <span><strong>彩色</strong><small>保留原始发票色彩</small></span>
+              <i aria-hidden="true"></i>
+            </label>
+            <label class="mode-card">
+              <input type="radio" name="colorMode" value="grayscale" />
+              <span class="mode-swatch mono-swatch" aria-hidden="true"></span>
+              <span><strong>黑白</strong><small>适合日常打印归档</small></span>
+              <i aria-hidden="true"></i>
+            </label>
+          </fieldset>
+
+          <div class="export-details">
+            <div><span>纸张</span><strong>A4 · 纵向</strong></div>
+            <div><span>排版</span><strong>每页 2 张</strong></div>
+            <div><span>预计页数</span><strong id="exportPageCount">1 页</strong></div>
+          </div>
+
+          <div class="export-spacer"></div>
+
+          <div class="success-card" id="successCard" hidden>
+            <span class="success-icon" aria-hidden="true">✓</span>
+            <span><strong>PDF 已生成</strong><small>下载已自动开始</small></span>
+          </div>
+
+          <button class="export-button" id="exportButton" type="button">
+            <span id="exportButtonText">生成并下载 PDF</span>
+            <span aria-hidden="true">↗</span>
+          </button>
+          <button class="manual-button" id="manualButton" type="button" hidden>
+            手动下载 PDF
+          </button>
+          <p class="export-hint">所有生成步骤均在当前浏览器内完成</p>
+        </aside>
+      </main>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="/src/app.js"></script>
+  </body>
+</html>

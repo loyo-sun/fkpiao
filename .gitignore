@@ -1,0 +1,7 @@
+node_modules
+dist
+dist-vercel
+public/app
+.wrangler
+.vercel
+.DS_Store

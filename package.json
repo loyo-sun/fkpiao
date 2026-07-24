@@ -1,0 +1,36 @@
+{
+  "name": "fapiao-local",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "dev": "vite --config vite.static.config.js",
+    "dev:site": "npm run build:app && vinext dev",
+    "build:app": "SITES_APP_BUILD=1 vite build --config vite.static.config.js --outDir public/app",
+    "build": "npm run build:app && vinext build",
+    "build:vercel": "vite build --config vite.static.config.js --outDir dist-vercel",
+    "preview": "vite preview --config vite.static.config.js"
+  },
+  "dependencies": {
+    "next": "16.2.6",
+    "pdf-lib": "1.17.1",
+    "pdfjs-dist": "5.4.149",
+    "react": "19.2.6",
+    "react-dom": "19.2.6"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "1.37.1",
+    "@types/node": "22.19.19",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.2",
+    "@vitejs/plugin-rsc": "0.5.26",
+    "typescript": "5.9.3",
+    "vinext": "0.0.50",
+    "vite": "8.0.13",
+    "wrangler": "4.92.0"
+  }
+}
