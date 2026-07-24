@@ -8,6 +8,18 @@ GlobalWorkerOptions.workerSrc = workerUrl;
 const A4 = { width: 595.28, height: 841.89 };
 const PREVIEW = { width: 794, height: 1123 };
 const CELL_MARGIN = 18;
+const PDFJS_ASSET_BASE = `${import.meta.env.BASE_URL}pdfjs/`;
+
+function loadLocalPdf(data) {
+  return getDocument({
+    data,
+    cMapUrl: `${PDFJS_ASSET_BASE}cmaps/`,
+    cMapPacked: true,
+    standardFontDataUrl: `${PDFJS_ASSET_BASE}standard_fonts/`,
+    wasmUrl: `${PDFJS_ASSET_BASE}wasm/`,
+    useSystemFonts: true,
+  });
+}
 
 const els = {
   fileInput: document.querySelector("#fileInput"),
@@ -126,7 +138,7 @@ async function addFiles(fileList) {
   for (const file of pdfFiles) {
     try {
       const bytes = await file.arrayBuffer();
-      const pdf = await getDocument({ data: new Uint8Array(bytes.slice(0)) }).promise;
+      const pdf = await loadLocalPdf(new Uint8Array(bytes.slice(0))).promise;
       newFiles.push({
         id: `${Date.now()}-${crypto.randomUUID()}`,
         name: file.name,

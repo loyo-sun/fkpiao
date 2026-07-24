@@ -2,6 +2,7 @@ node_modules
 dist
 dist-vercel
 public/app
+public/pdfjs
 .wrangler
 .vercel
 .DS_Store

@@ -7,11 +7,12 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "dev": "vite --config vite.static.config.js",
+    "prepare:pdfjs": "node scripts/copy-pdfjs-assets.mjs",
+    "dev": "npm run prepare:pdfjs && vite --config vite.static.config.js",
     "dev:site": "npm run build:app && vinext dev",
-    "build:app": "SITES_APP_BUILD=1 vite build --config vite.static.config.js --outDir public/app",
+    "build:app": "npm run prepare:pdfjs && SITES_APP_BUILD=1 vite build --config vite.static.config.js --outDir public/app",
     "build": "npm run build:app && vinext build",
-    "build:vercel": "vite build --config vite.static.config.js --outDir dist-vercel",
+    "build:vercel": "npm run prepare:pdfjs && vite build --config vite.static.config.js --outDir dist-vercel",
     "preview": "vite preview --config vite.static.config.js"
   },
   "dependencies": {
