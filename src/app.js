@@ -133,6 +133,13 @@ async function addFiles(fileList) {
     return;
   }
 
+  if (state.files.some((file) => file.isDemo)) {
+    state.files = [];
+    state.currentSheet = 0;
+    clearGeneratedDownload();
+    rebuildPages();
+  }
+
   els.dropzone.classList.add("is-loading");
   const newFiles = [];
   for (const file of pdfFiles) {
@@ -156,7 +163,7 @@ async function addFiles(fileList) {
   els.dropzone.classList.remove("is-loading");
 
   if (newFiles.length) {
-    state.files = state.files.filter((file) => !file.isDemo).concat(newFiles);
+    state.files = state.files.concat(newFiles);
     state.currentSheet = 0;
     clearGeneratedDownload();
     rebuildPages();
@@ -173,8 +180,8 @@ function drawPaperBase(ctx) {
   ctx.lineWidth = 1;
   ctx.setLineDash([5, 5]);
   ctx.beginPath();
-  ctx.moveTo(24, PREVIEW.height / 2);
-  ctx.lineTo(PREVIEW.width - 24, PREVIEW.height / 2);
+  ctx.moveTo(0, PREVIEW.height / 2);
+  ctx.lineTo(PREVIEW.width, PREVIEW.height / 2);
   ctx.stroke();
   ctx.setLineDash([]);
   ctx.fillStyle = "#a1aaa4";
@@ -417,8 +424,8 @@ async function createOutputPdf() {
     }
 
     sheet.drawLine({
-      start: { x: 18, y: A4.height / 2 },
-      end: { x: A4.width - 18, y: A4.height / 2 },
+      start: { x: 0, y: A4.height / 2 },
+      end: { x: A4.width, y: A4.height / 2 },
       thickness: 0.35,
       color: rgb(0.84, 0.86, 0.84),
       dashArray: [3, 3],
