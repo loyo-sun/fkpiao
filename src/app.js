@@ -531,15 +531,27 @@ function drawCellText(ctx, text, x, y, width, height, style, scale) {
         ? x + width - padding
         : x + padding;
   const maxWidth = Math.max(1, width - padding * 2);
-  let display = String(text);
-  while (ctx.measureText(display).width > maxWidth && display.length > 1) {
-    display = `${display.slice(0, -2)}…`;
+  const lines = [];
+  let line = "";
+  for (const character of String(text)) {
+    const candidate = line + character;
+    if (line && ctx.measureText(candidate).width > maxWidth) {
+      lines.push(line);
+      line = character;
+    } else {
+      line = candidate;
+    }
   }
+  if (line || !lines.length) lines.push(line);
+  const lineHeight = fontSize * 1.2;
+  const firstLineY = y + height / 2 - ((lines.length - 1) * lineHeight) / 2;
   ctx.save();
   ctx.beginPath();
   ctx.rect(x + 1, y + 1, width - 2, height - 2);
   ctx.clip();
-  ctx.fillText(display, textX, y + height / 2);
+  lines.forEach((textLine, index) => {
+    ctx.fillText(textLine, textX, firstLineY + index * lineHeight);
+  });
   ctx.restore();
 }
 

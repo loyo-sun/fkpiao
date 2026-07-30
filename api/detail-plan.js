@@ -103,6 +103,9 @@ export default async function handler(req, res) {
       columnWidths: Array.isArray(sheet.columnWidths) ? sheet.columnWidths.slice(0, 30) : [],
       rowHeights: Array.isArray(sheet.rowHeights) ? sheet.rowHeights.slice(0, 50) : [],
       pageSetup: sheet.pageSetup || {},
+      dataValidations: Array.isArray(sheet.dataValidations)
+        ? sheet.dataValidations.slice(0, 80)
+        : [],
     })),
   };
   const sheetNames = compactTemplate.sheets.map((sheet) => sheet.name);
@@ -115,7 +118,9 @@ export default async function handler(req, res) {
         requirements: [
           "严格沿用模板的标题、表头、列顺序、合并关系和视觉风格",
           "选择A5横向打印时仍能清晰阅读的每页数据行数，禁止把全部记录强压成一页",
+          "内容无法在A5页面中完整显示时必须换行，所有内容都要完整展示，不得截断或省略",
           "字段只映射到模板实际存在且语义明确的列",
+          "模板字段存在数据验证或允许值范围时，输出值必须严格属于该范围，尤其是类型字段",
           "分析全部发票；records仅返回需要纠正、归纳或补充的字段，金额不得猜测",
         ],
         template: compactTemplate,
@@ -153,7 +158,7 @@ export default async function handler(req, res) {
           {
             role: "system",
             content:
-              "你是专业的Excel报销明细表设计与内容分析器。你会同时阅读模板的结构化数据和视觉预览，理解标题、表头、数据区、字体、列宽、行高、合并单元格和打印范围。输出填写及A5分页计划，不重新设计用户模板。每页必须清晰可读；宽表优先A5横向，按合理行数分页并重复标题和表头。分析发票内容时只纠正确凿错误或生成模板明确需要的摘要，绝不编造金额、号码、日期、单位或行程。",
+              "你是专业的Excel报销明细表设计与内容分析器。你会同时阅读模板的结构化数据和视觉预览，理解标题、表头、数据区、字体、列宽、行高、合并单元格和打印范围。输出填写及A5分页计划，不重新设计用户模板。每页必须清晰可读；宽表优先A5横向，按合理行数分页并重复标题和表头。分析发票内容时只纠正确凿错误或生成模板明确需要的摘要，绝不编造金额、号码、日期、单位或行程。在生成输出表格时，要严格按照用户提供的模板进行输出。输出内容如果无法在A5页面中完整展示，则进行换行，确保所有内容都在页面中展示。若用户模板中的类型等字段设置了允许值范围，输出内容必须严格使用该范围内的值。",
           },
           {
             role: "user",

@@ -27,6 +27,9 @@ function cloneStyle(sourceCell, targetCell) {
   targetCell.alignment = sourceCell.alignment
     ? JSON.parse(JSON.stringify(sourceCell.alignment))
     : undefined;
+  if (sourceCell.dataValidation) {
+    targetCell.dataValidation = JSON.parse(JSON.stringify(sourceCell.dataValidation));
+  }
 }
 
 function compactText(value, maxLength = 80) {
@@ -86,6 +89,15 @@ export async function inspectDetailTemplate(templateBytes) {
           paperSize: worksheet.pageSetup?.paperSize || null,
           printArea: worksheet.pageSetup?.printArea || "",
         },
+        dataValidations: Object.entries(worksheet.dataValidations?.model || {})
+          .slice(0, 80)
+          .map(([range, rule]) => ({
+            range,
+            type: rule.type || "",
+            operator: rule.operator || "",
+            formulae: (rule.formulae || []).slice(0, 4),
+            allowBlank: Boolean(rule.allowBlank),
+          })),
       };
       }),
     },
@@ -155,6 +167,44 @@ function columnLetter(column) {
   return result;
 }
 
+function invoiceTypeKind(value) {
+  const text = String(value || "");
+  if (/高铁|动车|城际|G\d|D\d|C\d/i.test(text)) return "highSpeed";
+  if (/火车|铁路|车票/.test(text)) return "train";
+  if (/专用|专票/.test(text)) return "special";
+  if (/普通|普票/.test(text)) return "ordinary";
+  return "";
+}
+
+function allowedCellValues(workbook, cell) {
+  const rule = cell.dataValidation;
+  const source = rule?.type === "list" ? rule.formulae?.[0] : null;
+  if (typeof source !== "string") return [];
+  if (source.startsWith('"') && source.endsWith('"')) {
+    return source
+      .slice(1, -1)
+      .split(/[,，]/)
+      .map((value) => value.trim())
+      .filter(Boolean);
+  }
+  const match = /^(?:'([^']+)'|([^!]+))!\$?([A-Z]+)\$?(\d+):\$?([A-Z]+)\$?(\d+)$/i.exec(
+    source.replace(/^=/, ""),
+  );
+  if (!match) return [];
+  const worksheet = workbook.getWorksheet(match[1] || match[2]);
+  if (!worksheet) return [];
+  const startColumn = columnNumber(match[3].toUpperCase());
+  const endColumn = columnNumber(match[5].toUpperCase());
+  const values = [];
+  for (let row = Number(match[4]); row <= Number(match[6]); row += 1) {
+    for (let column = startColumn; column <= endColumn; column += 1) {
+      const value = worksheet.getCell(row, column).text.trim();
+      if (value) values.push(value);
+    }
+  }
+  return values;
+}
+
 export async function fillDetailWorkbook(templateBytes, invoices, plan) {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(templateBytes);
@@ -182,13 +232,25 @@ export async function fillDetailWorkbook(templateBytes, invoices, plan) {
   invoices.forEach((invoice, index) => {
     const resolvedInvoice = { ...invoice, ...(aiRecords.get(index) || {}) };
     const targetRow = worksheet.getRow(firstDataRow + index);
-    targetRow.height = styleRow.height;
+    const baseRowHeight = styleRow.height || 18;
+    let requiredRowHeight = baseRowHeight;
     for (let column = 1; column <= lastColumn; column += 1) {
       cloneStyle(styleRow.getCell(column), targetRow.getCell(column));
     }
     mappings.forEach((field, column) => {
       const targetCell = targetRow.getCell(column);
-      const value = resolvedInvoice[field] ?? "";
+      let value = resolvedInvoice[field] ?? "";
+      if (field === "invoiceType") {
+        const allowedValues = allowedCellValues(workbook, targetCell);
+        if (allowedValues.length && !allowedValues.includes(String(value))) {
+          const kind = invoiceTypeKind(value);
+          const matched = allowedValues.find((allowedValue) => invoiceTypeKind(allowedValue) === kind);
+          if (!matched) {
+            throw new Error(`第 ${index + 1} 条发票类型不在模板允许范围内`);
+          }
+          value = matched;
+        }
+      }
       targetCell.value = ["invoiceCode", "invoiceNumber", "trainNumber"].includes(field)
         ? { richText: [{ text: String(value) }] }
         : value;
@@ -202,7 +264,19 @@ export async function fillDetailWorkbook(templateBytes, invoices, plan) {
       ) {
         targetCell.numFmt = "@";
       }
+      const displayText = String(value ?? "");
+      const columnWidth = worksheet.getColumn(column).width || 10;
+      const estimatedLines = Math.max(1, Math.ceil(displayText.length / Math.max(4, columnWidth)));
+      if (estimatedLines > 1) {
+        targetCell.alignment = {
+          ...(targetCell.alignment || {}),
+          wrapText: true,
+          vertical: "middle",
+        };
+        requiredRowHeight = Math.max(requiredRowHeight, baseRowHeight * estimatedLines);
+      }
     });
+    targetRow.height = Math.min(150, requiredRowHeight);
     targetRow.commit();
   });
 
@@ -305,7 +379,7 @@ function createWorksheetPreviewModel(
   });
   const rowHeights = rowNumbers.map((rowNumber) => {
     const height = worksheet.getRow(rowNumber).height || 18;
-    return Math.max(22, Math.min(68, height * 1.35));
+    return Math.max(22, Math.min(220, height * 1.35));
   });
   const cells = [];
   const merged = mergedCellLayout(worksheet);
