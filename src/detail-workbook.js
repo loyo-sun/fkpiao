@@ -20,36 +20,6 @@ const FIELD_ALIASES = {
 
 export const DETAIL_FIELDS = Object.freeze(Object.keys(FIELD_ALIASES));
 
-const normalizeHeader = (value) =>
-  String(value ?? "")
-    .replace(/\s+/g, "")
-    .replace(/[：:（）()【】[\]_-]/g, "")
-    .toLowerCase();
-
-const aliasLookup = new Map(
-  Object.entries(FIELD_ALIASES).flatMap(([field, aliases]) =>
-    aliases.map((alias) => [normalizeHeader(alias), field]),
-  ),
-);
-
-function findHeaderRow(worksheet) {
-  let best = { rowNumber: 0, columns: new Map(), score: 0 };
-  const maxRow = Math.min(worksheet.rowCount || 30, 30);
-  const maxColumn = Math.min(worksheet.columnCount || 50, 50);
-
-  for (let rowNumber = 1; rowNumber <= maxRow; rowNumber += 1) {
-    const columns = new Map();
-    const row = worksheet.getRow(rowNumber);
-    for (let column = 1; column <= maxColumn; column += 1) {
-      const value = row.getCell(column).text;
-      const field = aliasLookup.get(normalizeHeader(value));
-      if (field) columns.set(column, field);
-    }
-    if (columns.size > best.score) best = { rowNumber, columns, score: columns.size };
-  }
-  return best;
-}
-
 function cloneStyle(sourceCell, targetCell) {
   if (!sourceCell?.style) return;
   targetCell.style = JSON.parse(JSON.stringify(sourceCell.style));
@@ -66,8 +36,10 @@ function compactText(value, maxLength = 80) {
 export async function inspectDetailTemplate(templateBytes) {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(templateBytes);
+  const worksheets = workbook.worksheets.slice(0, 8);
   return {
-    sheets: workbook.worksheets.slice(0, 8).map((worksheet) => {
+    snapshot: {
+      sheets: worksheets.map((worksheet) => {
       const maxRow = Math.min(Math.max(worksheet.rowCount, 1), 50);
       const maxColumn = Math.min(Math.max(worksheet.columnCount, 1), 30);
       const cells = [];
@@ -76,7 +48,25 @@ export async function inspectDetailTemplate(templateBytes) {
           const cell = worksheet.getCell(row, column);
           if (cell.isMerged && cell.master?.address !== cell.address) continue;
           const text = compactText(cell.text);
-          if (text) cells.push({ r: row, c: column, v: text });
+          if (text || cell.formula) {
+            cells.push({
+              r: row,
+              c: column,
+              v: text,
+              f: compactText(cell.formula, 120),
+              s: {
+                bold: Boolean(cell.font?.bold),
+                size: cell.font?.size || 10,
+                fill: colorToCss(
+                  cell.fill?.type === "pattern" ? cell.fill.fgColor : null,
+                  "",
+                ),
+                align: cell.alignment?.horizontal || "",
+                wrap: Boolean(cell.alignment?.wrapText),
+                numFmt: compactText(cell.numFmt, 40),
+              },
+            });
+          }
         }
       }
       return {
@@ -88,8 +78,26 @@ export async function inspectDetailTemplate(templateBytes) {
         columnWidths: Array.from({ length: maxColumn }, (_, index) =>
           Math.round((worksheet.getColumn(index + 1).width || 10) * 10) / 10,
         ),
+        rowHeights: Array.from({ length: maxRow }, (_, index) =>
+          Math.round((worksheet.getRow(index + 1).height || 18) * 10) / 10,
+        ),
+        pageSetup: {
+          orientation: worksheet.pageSetup?.orientation || "",
+          paperSize: worksheet.pageSetup?.paperSize || null,
+          printArea: worksheet.pageSetup?.printArea || "",
+        },
       };
-    }),
+      }),
+    },
+    previewModels: worksheets.slice(0, 4).map((worksheet) =>
+      createWorksheetPreviewModel(
+        worksheet,
+        Array.from(
+          { length: Math.min(Math.max(worksheet.rowCount, 1), 40) },
+          (_, index) => index + 1,
+        ),
+      ),
+    ),
   };
 }
 
@@ -99,6 +107,7 @@ function validatePlan(workbook, plan) {
   const headerRow = Number(plan.headerRow);
   const firstDataRow = Number(plan.firstDataRow);
   const styleSourceRow = Number(plan.styleSourceRow || firstDataRow);
+  const rowsPerPage = Math.max(4, Math.min(24, Number(plan.rowsPerPage) || 12));
   if (
     !Number.isInteger(headerRow) ||
     !Number.isInteger(firstDataRow) ||
@@ -123,7 +132,19 @@ function validatePlan(workbook, plan) {
     }
   }
   if (mappings.size < 2) throw new Error("AI 未能识别足够的明细表字段");
-  return { worksheet, headerRow, firstDataRow, styleSourceRow, mappings };
+  const lastColumn = Math.max(
+    ...mappings.keys(),
+    Math.min(Number(plan.lastColumn) || worksheet.columnCount, 80),
+  );
+  return {
+    worksheet,
+    headerRow,
+    firstDataRow,
+    styleSourceRow,
+    rowsPerPage,
+    lastColumn,
+    mappings,
+  };
 }
 
 function columnLetter(column) {
@@ -137,35 +158,66 @@ function columnLetter(column) {
 export async function fillDetailWorkbook(templateBytes, invoices, plan) {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(templateBytes);
-  const { worksheet, firstDataRow, styleSourceRow, mappings } = validatePlan(workbook, plan);
+  const {
+    worksheet,
+    headerRow,
+    firstDataRow,
+    styleSourceRow,
+    rowsPerPage,
+    lastColumn,
+    mappings,
+  } = validatePlan(workbook, plan);
   const styleRow = worksheet.getRow(styleSourceRow);
+  const aiRecords = new Map(
+    (plan.records || []).map((record) => [
+      Number(record.sourceIndex),
+      Object.fromEntries(
+        (record.values || [])
+          .filter((item) => DETAIL_FIELDS.includes(item.field))
+          .map((item) => [item.field, item.value]),
+      ),
+    ]),
+  );
 
   invoices.forEach((invoice, index) => {
+    const resolvedInvoice = { ...invoice, ...(aiRecords.get(index) || {}) };
     const targetRow = worksheet.getRow(firstDataRow + index);
     targetRow.height = styleRow.height;
+    for (let column = 1; column <= lastColumn; column += 1) {
+      cloneStyle(styleRow.getCell(column), targetRow.getCell(column));
+    }
     mappings.forEach((field, column) => {
       const targetCell = targetRow.getCell(column);
-      cloneStyle(styleRow.getCell(column), targetCell);
-      targetCell.value = invoice[field] ?? "";
-      if (["totalAmount", "amountWithoutTax", "taxAmount"].includes(field) && invoice[field] != null) {
+      const value = resolvedInvoice[field] ?? "";
+      targetCell.value = ["invoiceCode", "invoiceNumber", "trainNumber"].includes(field)
+        ? { richText: [{ text: String(value) }] }
+        : value;
+      if (
+        ["totalAmount", "amountWithoutTax", "taxAmount"].includes(field) &&
+        resolvedInvoice[field] != null
+      ) {
         targetCell.numFmt = "#,##0.00";
+      } else if (
+        ["invoiceCode", "invoiceNumber", "trainNumber", "issueDate"].includes(field)
+      ) {
+        targetCell.numFmt = "@";
       }
     });
     targetRow.commit();
   });
 
   const populatedLastRow = Math.max(worksheet.rowCount, firstDataRow + invoices.length - 1);
-  const mappedLastColumn = Math.max(...mappings.keys(), worksheet.columnCount);
   worksheet.pageSetup = {
     ...worksheet.pageSetup,
     paperSize: 11,
     orientation: "landscape",
     fitToPage: true,
     fitToWidth: 1,
-    fitToHeight: 1,
+    fitToHeight: 0,
     horizontalCentered: true,
     verticalCentered: false,
-    printArea: `A1:${columnLetter(mappedLastColumn)}${populatedLastRow}`,
+    printArea: `A1:${columnLetter(lastColumn)}${populatedLastRow}`,
+    printTitlesRow: `1:${headerRow}`,
     margins: {
       left: 0.2,
       right: 0.2,
@@ -175,12 +227,32 @@ export async function fillDetailWorkbook(templateBytes, invoices, plan) {
       footer: 0.1,
     },
   };
+  for (
+    let breakRow = firstDataRow + rowsPerPage - 1;
+    breakRow < firstDataRow + invoices.length - 1;
+    breakRow += rowsPerPage
+  ) {
+    worksheet.getRow(breakRow).addPageBreak();
+  }
   worksheet.views = [{ state: "normal", showGridLines: false }];
   workbook.creator = "发克票";
   workbook.modified = new Date();
-  const preview = createWorksheetPreviewModel(worksheet, populatedLastRow);
+  const previews = [];
+  for (let start = 0; start < invoices.length; start += rowsPerPage) {
+    const rowNumbers = [
+      ...Array.from(
+        { length: start === 0 ? firstDataRow - 1 : headerRow },
+        (_, index) => index + 1,
+      ),
+      ...Array.from(
+        { length: Math.min(rowsPerPage, invoices.length - start) },
+        (_, index) => firstDataRow + start + index,
+      ),
+    ];
+    previews.push(createWorksheetPreviewModel(worksheet, rowNumbers, lastColumn));
+  }
   const bytes = await workbook.xlsx.writeBuffer();
-  return { bytes, preview };
+  return { bytes, previews };
 }
 
 function colorToCss(color, fallback) {
@@ -216,21 +288,30 @@ function mergedCellLayout(worksheet) {
   return { masters, covered };
 }
 
-function createWorksheetPreviewModel(worksheet, populatedRowCount) {
-  const rowCount = Math.max(1, Math.min(populatedRowCount, 60));
-  const columnCount = Math.max(1, Math.min(worksheet.columnCount, 24));
+function createWorksheetPreviewModel(
+  worksheet,
+  requestedRows = Array.from(
+    { length: Math.min(Math.max(worksheet.rowCount, 1), 60) },
+    (_, index) => index + 1,
+  ),
+  requestedColumnCount = worksheet.columnCount,
+) {
+  const rowNumbers = requestedRows.slice(0, 60);
+  const rowCount = rowNumbers.length;
+  const columnCount = Math.max(1, Math.min(requestedColumnCount, 24));
   const columnWidths = Array.from({ length: columnCount }, (_, index) => {
     const width = worksheet.getColumn(index + 1).width || 10;
     return Math.max(42, Math.min(180, width * 7));
   });
-  const rowHeights = Array.from({ length: rowCount }, (_, index) => {
-    const height = worksheet.getRow(index + 1).height || 18;
+  const rowHeights = rowNumbers.map((rowNumber) => {
+    const height = worksheet.getRow(rowNumber).height || 18;
     return Math.max(22, Math.min(68, height * 1.35));
   });
   const cells = [];
   const merged = mergedCellLayout(worksheet);
+  const visibleRowIndex = new Map(rowNumbers.map((rowNumber, index) => [rowNumber, index]));
 
-  for (let row = 1; row <= rowCount; row += 1) {
+  for (const row of rowNumbers) {
     for (let column = 1; column <= columnCount; column += 1) {
       if (merged.covered.has(`${row}:${column}`)) continue;
       const cell = worksheet.getCell(row, column);
@@ -238,7 +319,7 @@ function createWorksheetPreviewModel(worksheet, populatedRowCount) {
       const fill =
         cell.fill?.type === "pattern" ? colorToCss(cell.fill.fgColor, "#ffffff") : "#ffffff";
       cells.push({
-        row: row - 1,
+        row: visibleRowIndex.get(row),
         column: column - 1,
         text: cell.text || "",
         fill,
@@ -248,7 +329,7 @@ function createWorksheetPreviewModel(worksheet, populatedRowCount) {
         horizontal: cell.alignment?.horizontal || "left",
         vertical: cell.alignment?.vertical || "middle",
         wrapText: Boolean(cell.alignment?.wrapText),
-        rowSpan: span?.rowSpan || 1,
+        rowSpan: Math.min(span?.rowSpan || 1, rowCount - visibleRowIndex.get(row)),
         columnSpan: span?.columnSpan || 1,
       });
     }

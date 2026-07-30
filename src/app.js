@@ -113,7 +113,11 @@ function rebuildPages() {
   });
   const detailPages =
     state.exportDetails && state.detailOutput
-      ? [{ kind: "detail", canvas: state.detailOutput.previewCanvas, pageIndex: 0 }]
+      ? state.detailOutput.previewCanvases.map((canvas, pageIndex) => ({
+          kind: "detail",
+          canvas,
+          pageIndex,
+        }))
       : [];
   state.pages = invoicePages.concat(detailPages);
   const sheets = Math.max(1, Math.ceil(state.pages.length / 2));
@@ -725,23 +729,14 @@ function getDetailInvoiceRows() {
     }));
 }
 
-async function requestDetailPlan(template, invoiceRows) {
+async function requestDetailPlan(template, templateImages, invoiceRows) {
   const response = await fetch("/api/detail-plan", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       template,
-      invoices: invoiceRows.slice(0, 3).map((invoice) => ({
-        invoiceType: invoice.invoiceType || "",
-        invoiceNumber: invoice.invoiceNumber || "",
-        issueDate: invoice.issueDate || "",
-        buyerName: invoice.buyerName || "",
-        sellerName: invoice.sellerName || "",
-        summary: invoice.summary || "",
-        totalAmount: invoice.totalAmount ?? null,
-        trainNumber: invoice.trainNumber || "",
-        route: invoice.route || "",
-      })),
+      templateImages,
+      invoices: invoiceRows.slice(0, 80),
     }),
   });
   const result = await response.json().catch(() => ({}));
@@ -762,9 +757,13 @@ async function generateDetailWorkbook() {
   const invoiceRows = getDetailInvoiceRows();
   if (!invoiceRows.length) throw new Error("演示发票不写入明细表，请先上传真实发票");
   const templateBytes = state.detailTemplate.bytes.slice(0);
-  const templateSnapshot = await inspectDetailTemplate(templateBytes);
-  const plan = await requestDetailPlan(templateSnapshot, invoiceRows);
-  const { bytes, preview } = await fillDetailWorkbook(
+  const inspection = await inspectDetailTemplate(templateBytes);
+  const templateImages = inspection.previewModels.map((model) => ({
+    sheetName: model.sheetName,
+    dataUrl: createDetailPreviewCanvas(model).toDataURL("image/jpeg", 0.82),
+  }));
+  const plan = await requestDetailPlan(inspection.snapshot, templateImages, invoiceRows);
+  const { bytes, previews } = await fillDetailWorkbook(
     templateBytes,
     invoiceRows,
     plan,
@@ -772,7 +771,7 @@ async function generateDetailWorkbook() {
   state.detailOutput = {
     bytes,
     fileName: detailOutputName(state.detailTemplate.name),
-    previewCanvas: createDetailPreviewCanvas(preview),
+    previewCanvases: previews.map(createDetailPreviewCanvas),
   };
 }
 
