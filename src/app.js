@@ -39,6 +39,8 @@ const els = {
   detailTemplateBlock: document.querySelector("#detailTemplateBlock"),
   detailTemplateInput: document.querySelector("#detailTemplateInput"),
   detailTemplateName: document.querySelector("#detailTemplateName"),
+  detailExportButton: document.querySelector("#detailExportButton"),
+  detailExportButtonText: document.querySelector("#detailExportButtonText"),
   exportButton: document.querySelector("#exportButton"),
   exportButtonText: document.querySelector("#exportButtonText"),
   manualButton: document.querySelector("#manualButton"),
@@ -117,19 +119,30 @@ function renderFileList() {
       file.confidence < 0.6
         ? `<small class="recognition-warning" title="${escapeHtml(file.reason)}">请确认识别结果</small>`
         : `<small title="${escapeHtml(file.reason)}">${file.sizeLabel}</small>`;
+    const totalAmount = file.details?.totalAmount;
+    const amountLabel =
+      totalAmount == null
+        ? "金额未识别"
+        : new Intl.NumberFormat("zh-CN", {
+            style: "currency",
+            currency: "CNY",
+          }).format(totalAmount);
     li.innerHTML = `
       <span class="file-icon">PDF</span>
       <span class="file-copy">
         <strong title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</strong>
         ${confidenceNote}
-        <select class="invoice-type-select" aria-label="${escapeHtml(file.name)} 的发票类型">
-          ${Object.entries(INVOICE_TYPES)
-            .map(
-              ([value, label]) =>
-                `<option value="${value}"${file.invoiceType === value ? " selected" : ""}>${label}</option>`,
-            )
-            .join("")}
-        </select>
+        <span class="file-meta-row">
+          <select class="invoice-type-select" aria-label="${escapeHtml(file.name)} 的发票类型">
+            ${Object.entries(INVOICE_TYPES)
+              .map(
+                ([value, label]) =>
+                  `<option value="${value}"${file.invoiceType === value ? " selected" : ""}>${label}</option>`,
+              )
+              .join("")}
+          </select>
+          <b class="invoice-total${totalAmount == null ? " is-missing" : ""}">${amountLabel}</b>
+        </span>
       </span>
       <button class="remove-file" type="button" aria-label="移除 ${escapeHtml(file.name)}">×</button>
     `;
@@ -157,6 +170,10 @@ function updateControls() {
   els.prevButton.disabled = state.currentSheet === 0;
   els.nextButton.disabled = state.currentSheet >= sheets - 1;
   els.exportButton.disabled = state.pages.length === 0;
+  els.detailExportButton.disabled =
+    !state.exportDetails ||
+    !state.detailTemplate ||
+    !state.files.some((file) => !file.isDemo);
 }
 
 function removeFile(id) {
@@ -538,6 +555,22 @@ async function exportDetailWorkbook() {
   );
 }
 
+async function exportDetailOnly() {
+  if (els.detailExportButton.disabled) return;
+  els.detailExportButton.disabled = true;
+  els.detailExportButtonText.textContent = "正在生成…";
+  try {
+    await exportDetailWorkbook();
+    showToast("明细表已生成，下载已开始");
+  } catch (error) {
+    console.error(error);
+    showToast(error.message || "明细表生成失败");
+  } finally {
+    els.detailExportButtonText.textContent = "重新导出明细表";
+    updateControls();
+  }
+}
+
 function clearGeneratedDownload() {
   if (state.exportUrl) URL.revokeObjectURL(state.exportUrl);
   state.exportUrl = null;
@@ -631,6 +664,7 @@ els.detailToggle.addEventListener("change", (event) => {
   state.exportDetails = event.target.checked;
   els.detailTemplateBlock.hidden = !state.exportDetails;
   clearGeneratedDownload();
+  updateControls();
 });
 els.detailTemplateInput.addEventListener("change", async (event) => {
   const file = event.target.files?.[0];
@@ -646,8 +680,10 @@ els.detailTemplateInput.addEventListener("change", async (event) => {
   };
   els.detailTemplateName.textContent = file.name;
   clearGeneratedDownload();
+  updateControls();
   showToast("明细表模板已读取");
 });
+els.detailExportButton.addEventListener("click", exportDetailOnly);
 els.exportButton.addEventListener("click", exportPdf);
 els.manualButton.addEventListener("click", () => {
   if (state.exportUrl) triggerDownload(state.exportUrl);

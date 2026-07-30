@@ -321,6 +321,33 @@ h2 {
   font-size: 10px;
 }
 
+.file-meta-row {
+  margin-top: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.file-meta-row .invoice-type-select {
+  margin-top: 0;
+}
+
+.invoice-total {
+  overflow: hidden;
+  color: #244d39;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.invoice-total.is-missing {
+  color: #9a8174;
+  font-size: 8px;
+  font-weight: 500;
+}
+
 .file-copy strong {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -711,6 +738,32 @@ h2 {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 8px;
+}
+
+.detail-export-button {
+  width: 100%;
+  min-height: 34px;
+  margin-top: 9px;
+  padding: 0 11px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid #9eb4a6;
+  border-radius: 8px;
+  color: var(--green);
+  background: white;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.detail-export-button:hover:not(:disabled) {
+  background: #edf6f1;
+}
+
+.detail-export-button:disabled {
+  opacity: 0.42;
+  cursor: default;
 }
 
 .export-details {
