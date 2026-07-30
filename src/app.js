@@ -35,15 +35,6 @@ const els = {
   totalPages: document.querySelector("#totalPages"),
   exportPageCount: document.querySelector("#exportPageCount"),
   copyCountInputs: document.querySelectorAll("[data-copy-type]"),
-  detailToggle: document.querySelector("#detailToggle"),
-  detailTemplateBlock: document.querySelector("#detailTemplateBlock"),
-  detailTemplateInput: document.querySelector("#detailTemplateInput"),
-  detailTemplateName: document.querySelector("#detailTemplateName"),
-  detailColumns: document.querySelector("#detailColumns"),
-  detailColumnList: document.querySelector("#detailColumnList"),
-  detailExportButton: document.querySelector("#detailExportButton"),
-  detailExportButtonText: document.querySelector("#detailExportButtonText"),
-  detailDownloadButton: document.querySelector("#detailDownloadButton"),
   exportButton: document.querySelector("#exportButton"),
   exportButtonText: document.querySelector("#exportButtonText"),
   manualButton: document.querySelector("#manualButton"),
@@ -62,11 +53,6 @@ const state = {
     train: 2,
     highSpeed: 2,
   },
-  exportDetails: false,
-  detailTemplate: null,
-  detailRequiredColumns: [],
-  detailHeader: null,
-  detailOutput: null,
   aiAvailable: null,
   exportUrl: null,
   renderToken: 0,
@@ -115,15 +101,7 @@ function rebuildPages() {
       })),
     ).flat();
   });
-  const detailPages =
-    state.exportDetails && state.detailOutput
-      ? state.detailOutput.previewCanvases.map((canvas, pageIndex) => ({
-          kind: "detail",
-          canvas,
-          pageIndex,
-        }))
-      : [];
-  state.pages = invoicePages.concat(detailPages);
+  state.pages = invoicePages;
   const sheets = Math.max(1, Math.ceil(state.pages.length / 2));
   state.currentSheet = Math.min(state.currentSheet, sheets - 1);
   renderFileList();
@@ -174,7 +152,6 @@ function renderFileList() {
       file.details = extractInvoiceFields(file.analysisText || "", file.name, {
         type: file.invoiceType,
       });
-      invalidateDetailOutput();
       clearGeneratedDownload();
       rebuildPages();
     });
@@ -192,23 +169,13 @@ function updateControls() {
   els.prevButton.disabled = state.currentSheet === 0;
   els.nextButton.disabled = state.currentSheet >= sheets - 1;
   els.exportButton.disabled = state.pages.length === 0;
-  els.detailExportButton.disabled =
-    !state.exportDetails ||
-    !state.detailTemplate ||
-    !state.detailRequiredColumns.length ||
-    !state.files.some((file) => !file.isDemo);
-  els.detailDownloadButton.disabled = !state.detailOutput;
-  if (state.exportDetails && !state.detailOutput) {
-    els.exportButton.disabled = true;
-    els.exportButtonText.textContent = "请先生成明细表";
-  } else if (!state.exportUrl) {
+  if (!state.exportUrl) {
     els.exportButtonText.textContent = "生成并下载 PDF";
   }
 }
 
 function removeFile(id) {
   state.files = state.files.filter((file) => file.id !== id);
-  invalidateDetailOutput();
   clearGeneratedDownload();
   rebuildPages();
 }
@@ -308,7 +275,6 @@ async function addFiles(fileList) {
   if (state.files.some((file) => file.isDemo)) {
     state.files = [];
     state.currentSheet = 0;
-    invalidateDetailOutput();
     clearGeneratedDownload();
     rebuildPages();
   }
@@ -346,7 +312,6 @@ async function addFiles(fileList) {
   if (newFiles.length) {
     state.files = state.files.concat(newFiles);
     state.currentSheet = 0;
-    invalidateDetailOutput();
     clearGeneratedDownload();
     rebuildPages();
     const uncertainCount = newFiles.filter((file) => file.confidence < 0.6).length;
@@ -512,100 +477,7 @@ function applyGrayscale(canvas) {
   return canvas;
 }
 
-function cloneCanvas(source) {
-  const canvas = document.createElement("canvas");
-  canvas.width = source.width;
-  canvas.height = source.height;
-  canvas.getContext("2d").drawImage(source, 0, 0);
-  return canvas;
-}
-
-function drawCellText(ctx, text, x, y, width, height, style, scale) {
-  if (!text) return;
-  const padding = 5 * scale;
-  const fontSize = style.fontSize * scale;
-  ctx.fillStyle = style.color;
-  ctx.font = `${style.bold ? 700 : 400} ${fontSize}px "PingFang SC", "Microsoft YaHei", sans-serif`;
-  ctx.textBaseline = "middle";
-  ctx.textAlign =
-    style.horizontal === "center" ? "center" : style.horizontal === "right" ? "right" : "left";
-  const textX =
-    style.horizontal === "center"
-      ? x + width / 2
-      : style.horizontal === "right"
-        ? x + width - padding
-        : x + padding;
-  const maxWidth = Math.max(1, width - padding * 2);
-  const lines = [];
-  let line = "";
-  for (const character of String(text)) {
-    const candidate = line + character;
-    if (line && ctx.measureText(candidate).width > maxWidth) {
-      lines.push(line);
-      line = character;
-    } else {
-      line = candidate;
-    }
-  }
-  if (line || !lines.length) lines.push(line);
-  const lineHeight = fontSize * 1.2;
-  const firstLineY = y + height / 2 - ((lines.length - 1) * lineHeight) / 2;
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(x + 1, y + 1, width - 2, height - 2);
-  ctx.clip();
-  lines.forEach((textLine, index) => {
-    ctx.fillText(textLine, textX, firstLineY + index * lineHeight);
-  });
-  ctx.restore();
-}
-
-function createDetailPreviewCanvas(model) {
-  const canvas = document.createElement("canvas");
-  canvas.width = 1400;
-  canvas.height = 990;
-  const ctx = canvas.getContext("2d");
-  const margin = 55;
-  const availableWidth = canvas.width - margin * 2;
-  const availableHeight = canvas.height - margin * 2;
-  const modelWidth = model.columnWidths.reduce((sum, width) => sum + width, 0);
-  const modelHeight = model.rowHeights.reduce((sum, height) => sum + height, 0);
-  const scale = Math.min(availableWidth / modelWidth, availableHeight / modelHeight, 2);
-  const tableWidth = modelWidth * scale;
-  const tableHeight = modelHeight * scale;
-  const startX = (canvas.width - tableWidth) / 2;
-  const startY = margin + Math.max(0, (availableHeight - tableHeight) / 2);
-  const xs = [startX];
-  const ys = [startY];
-
-  model.columnWidths.forEach((width) => xs.push(xs.at(-1) + width * scale));
-  model.rowHeights.forEach((height) => ys.push(ys.at(-1) + height * scale));
-
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  for (const cell of model.cells) {
-    const x = xs[cell.column];
-    const y = ys[cell.row];
-    const width = xs[Math.min(model.columnCount, cell.column + (cell.columnSpan || 1))] - x;
-    const height = ys[Math.min(model.rowCount, cell.row + (cell.rowSpan || 1))] - y;
-    ctx.fillStyle = cell.fill;
-    ctx.fillRect(x, y, width, height);
-    drawCellText(ctx, cell.text, x, y, width, height, cell, scale);
-    ctx.strokeStyle = "#cfd6d1";
-    ctx.lineWidth = Math.max(1, scale * 0.7);
-    ctx.beginPath();
-    ctx.rect(x, y, width, height);
-    ctx.stroke();
-  }
-  return canvas;
-}
-
 async function renderSourcePage(pageRef, maxWidth, maxHeight, grayscale = false) {
-  if (pageRef.kind === "detail") {
-    const detail = cloneCanvas(pageRef.canvas);
-    return grayscale ? applyGrayscale(detail) : detail;
-  }
   if (pageRef.file.isDemo) {
     const demo = createDemoCanvas(pageRef.file, 1.3);
     return grayscale ? applyGrayscale(demo) : demo;
@@ -726,141 +598,6 @@ function triggerDownload(url) {
   anchor.remove();
 }
 
-function triggerBlobDownload(blob, fileName) {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = fileName;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-function getDetailInvoiceRows() {
-  return state.files
-    .filter((file) => !file.isDemo)
-    .map((file) => ({
-      ...file.details,
-      invoiceType: INVOICE_TYPES[file.invoiceType],
-    }));
-}
-
-async function requestDetailPlan(template, templateImages, invoiceRows, requiredColumns) {
-  const response = await fetch("/api/detail-plan", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      template,
-      templateImages,
-      requiredColumns,
-      confirmedHeader: state.detailHeader,
-      policyProfile: state.detailTemplate?.inspection?.policyProfile || "",
-      invoices: invoiceRows.slice(0, 80),
-    }),
-  });
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    if (result.error === "AI_NOT_CONFIGURED") {
-      throw new Error("Vercel 尚未配置 AI API，无法分析明细表模板");
-    }
-    throw new Error("AI 未能理解该模板，请检查模板表头后重试");
-  }
-  return result.data;
-}
-
-async function requestTemplateColumns(template, templateImages, policyProfile) {
-  const response = await fetch("/api/template-columns", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ template, templateImages, policyProfile }),
-  });
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    if (result.error === "AI_NOT_CONFIGURED") {
-      throw new Error("Vercel 尚未配置 AI API，无法识别 Excel 表头");
-    }
-    throw new Error("AI 未能识别模板中的明细表表头");
-  }
-  return result.data;
-}
-
-async function generateDetailWorkbook() {
-  if (!state.exportDetails) throw new Error("请先开启明细表导出");
-  if (!state.detailTemplate) throw new Error("请先上传明细表模板");
-  const { detailOutputName, fillDetailWorkbook, inspectDetailTemplate } =
-    await import("./detail-workbook.js");
-  const invoiceRows = getDetailInvoiceRows();
-  if (!invoiceRows.length) throw new Error("演示发票不写入明细表，请先上传真实发票");
-  const templateBytes = state.detailTemplate.bytes.slice(0);
-  const inspection =
-    state.detailTemplate.inspection || (await inspectDetailTemplate(templateBytes));
-  const requiredColumns = state.detailRequiredColumns.slice();
-  if (!requiredColumns.length) throw new Error("请至少选择一个必填列");
-  const templateImages = inspection.previewModels.map((model) => ({
-    sheetName: model.sheetName,
-    dataUrl: createDetailPreviewCanvas(model).toDataURL("image/jpeg", 0.82),
-  }));
-  const plan = await requestDetailPlan(
-    inspection.snapshot,
-    templateImages,
-    invoiceRows,
-    requiredColumns,
-  );
-  plan.targetSheet = state.detailHeader.targetSheet;
-  plan.headerRow = state.detailHeader.headerRow;
-  plan.requiredColumns = requiredColumns;
-  const { bytes, previews } = await fillDetailWorkbook(
-    templateBytes,
-    invoiceRows,
-    plan,
-  );
-  state.detailOutput = {
-    bytes,
-    fileName: detailOutputName(state.detailTemplate.name),
-    previewCanvases: previews.map(createDetailPreviewCanvas),
-  };
-}
-
-async function handleGenerateDetail() {
-  if (els.detailExportButton.disabled) return;
-  els.detailExportButton.disabled = true;
-  els.detailExportButtonText.textContent = "AI 正在分析模板…";
-  try {
-    await generateDetailWorkbook();
-    clearGeneratedDownload();
-    rebuildPages();
-    state.currentSheet = Math.max(0, Math.ceil(state.pages.length / 2) - 1);
-    updateControls();
-    renderPreview();
-    els.detailExportButtonText.textContent = "重新生成明细表";
-    showToast("明细表已生成，并已加入 PDF 预览");
-  } catch (error) {
-    console.error(error);
-    showToast(error.message || "明细表生成失败");
-    els.detailExportButtonText.textContent = "生成明细表并加入预览";
-  }
-  updateControls();
-}
-
-function downloadDetailWorkbook() {
-  if (!state.detailOutput) return;
-  triggerBlobDownload(
-    new Blob([state.detailOutput.bytes], {
-      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    }),
-    state.detailOutput.fileName,
-  );
-  showToast("Excel 明细表下载已开始");
-}
-
-function invalidateDetailOutput() {
-  state.detailOutput = null;
-  if (els.detailExportButtonText) {
-    els.detailExportButtonText.textContent = "生成明细表并加入预览";
-  }
-}
-
 function clearGeneratedDownload() {
   if (state.exportUrl) URL.revokeObjectURL(state.exportUrl);
   state.exportUrl = null;
@@ -870,10 +607,6 @@ function clearGeneratedDownload() {
 
 async function exportPdf() {
   if (!state.pages.length) return;
-  if (state.exportDetails && !state.detailOutput) {
-    showToast("请先生成明细表，再导出 PDF");
-    return;
-  }
   clearGeneratedDownload();
   els.exportButton.disabled = true;
   els.exportButtonText.textContent = "正在本地生成…";
@@ -918,7 +651,6 @@ els.fileInput.addEventListener("change", (event) => addFiles(event.target.files)
 els.dropzone.addEventListener("drop", (event) => addFiles(event.dataTransfer.files));
 els.clearButton.addEventListener("click", () => {
   state.files = [];
-  invalidateDetailOutput();
   clearGeneratedDownload();
   rebuildPages();
 });
@@ -954,81 +686,6 @@ els.copyCountInputs.forEach((input) => {
     rebuildPages();
   });
 });
-els.detailToggle.addEventListener("change", (event) => {
-  state.exportDetails = event.target.checked;
-  els.detailTemplateBlock.hidden = !state.exportDetails;
-  clearGeneratedDownload();
-  rebuildPages();
-});
-els.detailTemplateInput.addEventListener("change", async (event) => {
-  const file = event.target.files?.[0];
-  if (!file) return;
-  if (!file.name.toLowerCase().endsWith(".xlsx")) {
-    showToast("请选择 .xlsx 格式的明细表模板");
-    event.target.value = "";
-    return;
-  }
-  els.detailTemplateName.textContent = "AI 正在识别 Excel 表头…";
-  try {
-    const bytes = await file.arrayBuffer();
-    const { inspectDetailTemplate } = await import("./detail-workbook.js");
-    const inspection = await inspectDetailTemplate(bytes.slice(0));
-    const templateImages = inspection.previewModels.map((model) => ({
-      sheetName: model.sheetName,
-      dataUrl: createDetailPreviewCanvas(model).toDataURL("image/jpeg", 0.82),
-    }));
-    const header = await requestTemplateColumns(
-      inspection.snapshot,
-      templateImages,
-      inspection.policyProfile,
-    );
-    state.detailTemplate = { name: file.name, bytes, inspection };
-    state.detailHeader = {
-      targetSheet: header.targetSheet,
-      headerRow: header.headerRow,
-    };
-    state.detailRequiredColumns = header.columns;
-    els.detailColumnList.innerHTML = header.columns
-      .map(
-        (item) =>
-          `<label><input type="checkbox" data-column="${item.column}" checked /><span>${escapeHtml(item.label)}</span></label>`,
-      )
-      .join("");
-    els.detailColumns.hidden = false;
-    invalidateDetailOutput();
-    els.detailTemplateName.textContent = `${file.name} · ${header.targetSheet} 第 ${header.headerRow} 行表头`;
-    clearGeneratedDownload();
-    rebuildPages();
-    showToast(`已识别 ${header.columns.length} 个 Excel 表头`);
-  } catch (error) {
-    state.detailTemplate = null;
-    state.detailHeader = null;
-    state.detailRequiredColumns = [];
-    els.detailColumns.hidden = true;
-    els.detailColumnList.innerHTML = "";
-    els.detailTemplateName.textContent = error.message || "模板表头识别失败";
-    event.target.value = "";
-    updateControls();
-    showToast(error.message || "模板表头识别失败");
-  }
-});
-els.detailColumnList.addEventListener("change", () => {
-  const allColumns = state.detailTemplate
-    ? Array.from(els.detailColumnList.querySelectorAll("input")).map((input) => ({
-        column: Number(input.dataset.column),
-        label: input.parentElement.querySelector("span")?.textContent || "",
-        checked: input.checked,
-      }))
-    : [];
-  state.detailRequiredColumns = allColumns
-    .filter((item) => item.checked)
-    .map(({ column, label }) => ({ column, label }));
-  invalidateDetailOutput();
-  clearGeneratedDownload();
-  rebuildPages();
-});
-els.detailExportButton.addEventListener("click", handleGenerateDetail);
-els.detailDownloadButton.addEventListener("click", downloadDetailWorkbook);
 els.exportButton.addEventListener("click", exportPdf);
 els.manualButton.addEventListener("click", () => {
   if (state.exportUrl) triggerDownload(state.exportUrl);

@@ -5,12 +5,6 @@
   "functions": {
     "api/analyze.js": {
       "maxDuration": 30
-    },
-    "api/detail-plan.js": {
-      "maxDuration": 30
-    },
-    "api/template-columns.js": {
-      "maxDuration": 30
     }
   }
 }

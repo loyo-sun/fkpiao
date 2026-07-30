@@ -112,36 +112,6 @@
             </div>
           </fieldset>
 
-          <div class="detail-config">
-            <label class="toggle-row">
-              <span><strong>同时导出明细表</strong><small>按模板表头自动填写发票内容</small></span>
-              <input id="detailToggle" type="checkbox" />
-              <i aria-hidden="true"></i>
-            </label>
-            <div class="template-block" id="detailTemplateBlock" hidden>
-              <label class="template-upload" for="detailTemplateInput">
-                <input id="detailTemplateInput" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
-                <span>上传 Excel 模板</span>
-              </label>
-              <small id="detailTemplateName">支持识别“发票号码、日期、金额、车次”等表头</small>
-              <a class="policy-template-download" href="./templates/费用报销总表_制度V6模板.xlsx" download>
-                下载制度 V6 定制模板
-              </a>
-              <div class="detail-columns" id="detailColumns" hidden>
-                <strong>选择必填列</strong>
-                <div id="detailColumnList"></div>
-              </div>
-              <button class="detail-export-button" id="detailExportButton" type="button" disabled>
-                <span id="detailExportButtonText">生成明细表并加入预览</span>
-                <span aria-hidden="true">＋</span>
-              </button>
-              <button class="detail-download-button" id="detailDownloadButton" type="button" disabled>
-                <span>下载 Excel 明细表</span>
-                <span aria-hidden="true">↓</span>
-              </button>
-            </div>
-          </div>
-
           <div class="export-details">
             <div><span>纸张</span><strong>A4 · 纵向</strong></div>
             <div><span>排版</span><strong>每页 2 张</strong></div>
