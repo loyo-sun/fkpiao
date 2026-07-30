@@ -1,5 +1,10 @@
 {
   "buildCommand": "npm run build:vercel",
   "outputDirectory": "dist-vercel",
-  "framework": "vite"
+  "framework": "vite",
+  "functions": {
+    "api/analyze.js": {
+      "maxDuration": 30
+    }
+  }
 }

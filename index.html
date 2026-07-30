@@ -23,7 +23,7 @@
         </a>
         <div class="privacy-pill">
           <span class="privacy-dot" aria-hidden="true"></span>
-          文件仅在本地处理
+          本地优先 · 必要时 AI
         </div>
       </header>
 
@@ -52,7 +52,7 @@
 
           <div class="local-note">
             <span aria-hidden="true">◎</span>
-            <p><strong>隐私优先</strong>文件不会上传，也不会离开这台设备。</p>
+            <p><strong>最小化上传</strong>仅当本地无法识别类型或金额时，上传必要文本或压缩后的首页用于 AI 分析。</p>
           </div>
         </aside>
 
@@ -75,7 +75,7 @@
               <div class="paper-label">A4</div>
             </div>
           </div>
-          <p class="preview-caption">每页上下各放置 1 张发票，自动等比缩放并居中</p>
+          <p class="preview-caption">此处展示最终 PDF 的完整页面顺序与排版效果</p>
         </section>
 
         <aside class="panel export-panel" aria-label="导出配置">
@@ -125,7 +125,11 @@
               </label>
               <small id="detailTemplateName">支持识别“发票号码、日期、金额、车次”等表头</small>
               <button class="detail-export-button" id="detailExportButton" type="button" disabled>
-                <span id="detailExportButtonText">导出明细表</span>
+                <span id="detailExportButtonText">生成明细表并加入预览</span>
+                <span aria-hidden="true">＋</span>
+              </button>
+              <button class="detail-download-button" id="detailDownloadButton" type="button" disabled>
+                <span>下载 Excel 明细表</span>
                 <span aria-hidden="true">↓</span>
               </button>
             </div>
@@ -151,7 +155,7 @@
           <button class="manual-button" id="manualButton" type="button" hidden>
             手动下载 PDF
           </button>
-          <p class="export-hint">识别、排版与明细表填写均在当前浏览器内完成</p>
+          <p class="export-hint">排版与文件生成在浏览器完成，AI 仅用于低置信度识别</p>
         </aside>
       </main>
     </div>

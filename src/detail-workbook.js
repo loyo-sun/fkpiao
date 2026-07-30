@@ -92,7 +92,61 @@ export async function fillDetailWorkbook(templateBytes, invoices) {
 
   workbook.creator = "发克票";
   workbook.modified = new Date();
-  return workbook.xlsx.writeBuffer();
+  const preview = createWorksheetPreviewModel(
+    worksheet,
+    Math.max(worksheet.rowCount, firstDataRow + invoices.length - 1),
+  );
+  const bytes = await workbook.xlsx.writeBuffer();
+  return { bytes, preview };
+}
+
+function colorToCss(color, fallback) {
+  if (!color) return fallback;
+  if (color.argb) return `#${color.argb.slice(-6)}`;
+  return fallback;
+}
+
+function createWorksheetPreviewModel(worksheet, populatedRowCount) {
+  const rowCount = Math.max(1, Math.min(populatedRowCount, 60));
+  const columnCount = Math.max(1, Math.min(worksheet.columnCount, 24));
+  const columnWidths = Array.from({ length: columnCount }, (_, index) => {
+    const width = worksheet.getColumn(index + 1).width || 10;
+    return Math.max(42, Math.min(180, width * 7));
+  });
+  const rowHeights = Array.from({ length: rowCount }, (_, index) => {
+    const height = worksheet.getRow(index + 1).height || 18;
+    return Math.max(22, Math.min(68, height * 1.35));
+  });
+  const cells = [];
+
+  for (let row = 1; row <= rowCount; row += 1) {
+    for (let column = 1; column <= columnCount; column += 1) {
+      const cell = worksheet.getCell(row, column);
+      const fill =
+        cell.fill?.type === "pattern" ? colorToCss(cell.fill.fgColor, "#ffffff") : "#ffffff";
+      cells.push({
+        row: row - 1,
+        column: column - 1,
+        text: cell.text || "",
+        fill,
+        color: colorToCss(cell.font?.color, "#27352e"),
+        bold: Boolean(cell.font?.bold),
+        fontSize: Math.max(8, Math.min(16, cell.font?.size || 10)),
+        horizontal: cell.alignment?.horizontal || "left",
+        vertical: cell.alignment?.vertical || "middle",
+        wrapText: Boolean(cell.alignment?.wrapText),
+      });
+    }
+  }
+
+  return {
+    sheetName: worksheet.name,
+    rowCount,
+    columnCount,
+    columnWidths,
+    rowHeights,
+    cells,
+  };
 }
 
 export function detailOutputName(templateName) {

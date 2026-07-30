@@ -740,7 +740,8 @@ h2 {
   font-size: 8px;
 }
 
-.detail-export-button {
+.detail-export-button,
+.detail-download-button {
   width: 100%;
   min-height: 34px;
   margin-top: 9px;
@@ -757,11 +758,19 @@ h2 {
   font-weight: 700;
 }
 
-.detail-export-button:hover:not(:disabled) {
+.detail-export-button:hover:not(:disabled),
+.detail-download-button:hover:not(:disabled) {
   background: #edf6f1;
 }
 
-.detail-export-button:disabled {
+.detail-download-button {
+  margin-top: 6px;
+  border-color: #d0dad3;
+  color: #526b5d;
+}
+
+.detail-export-button:disabled,
+.detail-download-button:disabled {
   opacity: 0.42;
   cursor: default;
 }

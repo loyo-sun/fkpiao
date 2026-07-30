@@ -41,6 +41,7 @@ const els = {
   detailTemplateName: document.querySelector("#detailTemplateName"),
   detailExportButton: document.querySelector("#detailExportButton"),
   detailExportButtonText: document.querySelector("#detailExportButtonText"),
+  detailDownloadButton: document.querySelector("#detailDownloadButton"),
   exportButton: document.querySelector("#exportButton"),
   exportButtonText: document.querySelector("#exportButtonText"),
   manualButton: document.querySelector("#manualButton"),
@@ -61,6 +62,8 @@ const state = {
   },
   exportDetails: false,
   detailTemplate: null,
+  detailOutput: null,
+  aiAvailable: null,
   exportUrl: null,
   renderToken: 0,
 };
@@ -97,12 +100,22 @@ function resetToDemo() {
 }
 
 function rebuildPages() {
-  state.pages = state.files.flatMap((file) => {
+  const invoicePages = state.files.flatMap((file) => {
     const copies = state.copyCounts[file.invoiceType] ?? 1;
     return Array.from({ length: copies }, (_, copyIndex) =>
-      Array.from({ length: file.pageCount }, (_, pageIndex) => ({ file, pageIndex, copyIndex })),
+      Array.from({ length: file.pageCount }, (_, pageIndex) => ({
+        kind: "invoice",
+        file,
+        pageIndex,
+        copyIndex,
+      })),
     ).flat();
   });
+  const detailPages =
+    state.exportDetails && state.detailOutput
+      ? [{ kind: "detail", canvas: state.detailOutput.previewCanvas, pageIndex: 0 }]
+      : [];
+  state.pages = invoicePages.concat(detailPages);
   const sheets = Math.max(1, Math.ceil(state.pages.length / 2));
   state.currentSheet = Math.min(state.currentSheet, sheets - 1);
   renderFileList();
@@ -153,6 +166,7 @@ function renderFileList() {
       file.details = extractInvoiceFields(file.analysisText || "", file.name, {
         type: file.invoiceType,
       });
+      invalidateDetailOutput();
       clearGeneratedDownload();
       rebuildPages();
     });
@@ -174,10 +188,18 @@ function updateControls() {
     !state.exportDetails ||
     !state.detailTemplate ||
     !state.files.some((file) => !file.isDemo);
+  els.detailDownloadButton.disabled = !state.detailOutput;
+  if (state.exportDetails && !state.detailOutput) {
+    els.exportButton.disabled = true;
+    els.exportButtonText.textContent = "请先生成明细表";
+  } else if (!state.exportUrl) {
+    els.exportButtonText.textContent = "生成并下载 PDF";
+  }
 }
 
 function removeFile(id) {
   state.files = state.files.filter((file) => file.id !== id);
+  invalidateDetailOutput();
   clearGeneratedDownload();
   rebuildPages();
 }
@@ -193,6 +215,78 @@ function readableSize(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+async function renderFirstPageForAi(pdf) {
+  const page = await pdf.getPage(1);
+  const base = page.getViewport({ scale: 1 });
+  const scale = Math.min(1200 / base.width, 1200 / base.height, 2);
+  const viewport = page.getViewport({ scale });
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(viewport.width));
+  canvas.height = Math.max(1, Math.round(viewport.height));
+  await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+  return canvas.toDataURL("image/jpeg", 0.68);
+}
+
+function mergeAiAnalysis(local, ai) {
+  const type = local.confidence < 0.6 ? ai.type : local.type;
+  const details = {
+    ...local.details,
+    invoiceType: INVOICE_TYPES[type],
+  };
+  [
+    "totalAmount",
+    "invoiceNumber",
+    "issueDate",
+    "buyerName",
+    "sellerName",
+    "trainNumber",
+    "route",
+    "summary",
+  ].forEach((field) => {
+    if ((details[field] == null || details[field] === "") && ai[field] != null) {
+      details[field] = ai[field];
+    }
+  });
+  return {
+    ...local,
+    type,
+    confidence: local.confidence < 0.6 ? ai.confidence : local.confidence,
+    reason: "本地规则识别，缺失字段由云端 AI 补充",
+    details,
+    aiUsed: true,
+  };
+}
+
+async function maybeAnalyzeWithAi(pdf, fileName, localAnalysis) {
+  const needsAi = localAnalysis.confidence < 0.6 || localAnalysis.details.totalAmount == null;
+  if (!needsAi || state.aiAvailable === false) return localAnalysis;
+  try {
+    const payload = {
+      fileName,
+      text: localAnalysis.text.slice(0, 5000),
+    };
+    if (localAnalysis.text.length < 80) {
+      payload.imageDataUrl = await renderFirstPageForAi(pdf);
+    }
+    const response = await fetch("/api/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (response.status === 503) {
+      state.aiAvailable = false;
+      return localAnalysis;
+    }
+    if (!response.ok) return localAnalysis;
+    const result = await response.json();
+    state.aiAvailable = true;
+    return mergeAiAnalysis(localAnalysis, result.data);
+  } catch (error) {
+    console.warn("AI fallback unavailable", error);
+    return localAnalysis;
+  }
+}
+
 async function addFiles(fileList) {
   const pdfFiles = [...fileList].filter(
     (file) => file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf"),
@@ -205,6 +299,7 @@ async function addFiles(fileList) {
   if (state.files.some((file) => file.isDemo)) {
     state.files = [];
     state.currentSheet = 0;
+    invalidateDetailOutput();
     clearGeneratedDownload();
     rebuildPages();
   }
@@ -215,7 +310,8 @@ async function addFiles(fileList) {
     try {
       const bytes = await file.arrayBuffer();
       const pdf = await loadLocalPdf(new Uint8Array(bytes.slice(0))).promise;
-      const analysis = await analyzePdf(pdf, file.name);
+      const localAnalysis = await analyzePdf(pdf, file.name);
+      const analysis = await maybeAnalyzeWithAi(pdf, file.name, localAnalysis);
       newFiles.push({
         id: `${Date.now()}-${crypto.randomUUID()}`,
         name: file.name,
@@ -229,6 +325,7 @@ async function addFiles(fileList) {
         reason: analysis.reason,
         analysisText: analysis.text,
         details: analysis.details,
+        aiUsed: Boolean(analysis.aiUsed),
       });
     } catch (error) {
       console.error(error);
@@ -240,11 +337,15 @@ async function addFiles(fileList) {
   if (newFiles.length) {
     state.files = state.files.concat(newFiles);
     state.currentSheet = 0;
+    invalidateDetailOutput();
     clearGeneratedDownload();
     rebuildPages();
     const uncertainCount = newFiles.filter((file) => file.confidence < 0.6).length;
+    const aiCount = newFiles.filter((file) => file.aiUsed).length;
     showToast(
-      uncertainCount
+      aiCount
+        ? `已识别 ${newFiles.length} 个 PDF，其中 ${aiCount} 个由 AI 补充`
+        : uncertainCount
         ? `已加入 ${newFiles.length} 个 PDF，${uncertainCount} 个类型需要确认`
         : `已识别 ${newFiles.length} 个 PDF`,
     );
@@ -402,7 +503,104 @@ function applyGrayscale(canvas) {
   return canvas;
 }
 
+function cloneCanvas(source) {
+  const canvas = document.createElement("canvas");
+  canvas.width = source.width;
+  canvas.height = source.height;
+  canvas.getContext("2d").drawImage(source, 0, 0);
+  return canvas;
+}
+
+function drawCellText(ctx, text, x, y, width, height, style, scale) {
+  if (!text) return;
+  const padding = 5 * scale;
+  const fontSize = style.fontSize * scale;
+  ctx.fillStyle = style.color;
+  ctx.font = `${style.bold ? 700 : 400} ${fontSize}px "PingFang SC", "Microsoft YaHei", sans-serif`;
+  ctx.textBaseline = "middle";
+  ctx.textAlign =
+    style.horizontal === "center" ? "center" : style.horizontal === "right" ? "right" : "left";
+  const textX =
+    style.horizontal === "center"
+      ? x + width / 2
+      : style.horizontal === "right"
+        ? x + width - padding
+        : x + padding;
+  const maxWidth = Math.max(1, width - padding * 2);
+  let display = String(text);
+  while (ctx.measureText(display).width > maxWidth && display.length > 1) {
+    display = `${display.slice(0, -2)}…`;
+  }
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x + 1, y + 1, width - 2, height - 2);
+  ctx.clip();
+  ctx.fillText(display, textX, y + height / 2);
+  ctx.restore();
+}
+
+function createDetailPreviewCanvas(model) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 1400;
+  canvas.height = 990;
+  const ctx = canvas.getContext("2d");
+  const margin = 55;
+  const titleHeight = 54;
+  const availableWidth = canvas.width - margin * 2;
+  const availableHeight = canvas.height - margin * 2 - titleHeight;
+  const modelWidth = model.columnWidths.reduce((sum, width) => sum + width, 0);
+  const modelHeight = model.rowHeights.reduce((sum, height) => sum + height, 0);
+  const scale = Math.min(availableWidth / modelWidth, availableHeight / modelHeight, 2);
+  const tableWidth = modelWidth * scale;
+  const tableHeight = modelHeight * scale;
+  const startX = (canvas.width - tableWidth) / 2;
+  const startY = margin + titleHeight + Math.max(0, (availableHeight - tableHeight) / 2);
+  const xs = [startX];
+  const ys = [startY];
+
+  model.columnWidths.forEach((width) => xs.push(xs.at(-1) + width * scale));
+  model.rowHeights.forEach((height) => ys.push(ys.at(-1) + height * scale));
+
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#25342c";
+  ctx.font = '700 25px "PingFang SC", "Microsoft YaHei", sans-serif';
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText(model.sheetName || "发票明细表", startX, margin + titleHeight / 2);
+
+  for (const cell of model.cells) {
+    const x = xs[cell.column];
+    const y = ys[cell.row];
+    const width = xs[cell.column + 1] - x;
+    const height = ys[cell.row + 1] - y;
+    ctx.fillStyle = cell.fill;
+    ctx.fillRect(x, y, width, height);
+    drawCellText(ctx, cell.text, x, y, width, height, cell, scale);
+  }
+
+  ctx.strokeStyle = "#cfd6d1";
+  ctx.lineWidth = Math.max(1, scale * 0.7);
+  xs.forEach((x) => {
+    ctx.beginPath();
+    ctx.moveTo(x, startY);
+    ctx.lineTo(x, startY + tableHeight);
+    ctx.stroke();
+  });
+  ys.forEach((y) => {
+    ctx.beginPath();
+    ctx.moveTo(startX, y);
+    ctx.lineTo(startX + tableWidth, y);
+    ctx.stroke();
+  });
+  return canvas;
+}
+
 async function renderSourcePage(pageRef, maxWidth, maxHeight, grayscale = false) {
+  if (pageRef.kind === "detail") {
+    const detail = cloneCanvas(pageRef.canvas);
+    return grayscale ? applyGrayscale(detail) : detail;
+  }
   if (pageRef.file.isDemo) {
     const demo = createDemoCanvas(pageRef.file, 1.3);
     return grayscale ? applyGrayscale(demo) : demo;
@@ -490,7 +688,7 @@ async function createOutputPdf() {
         height: A4.height / 2 - (CELL_MARGIN * 2) / 1.33,
       };
 
-      if (state.mode === "color" && !pageRef.file.isDemo) {
+      if (pageRef.kind === "invoice" && state.mode === "color" && !pageRef.file.isDemo) {
         const [embedded] = await output.embedPdf(sourceDocs.get(pageRef.file.id), [
           pageRef.pageIndex,
         ]);
@@ -534,40 +732,68 @@ function triggerBlobDownload(blob, fileName) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-async function exportDetailWorkbook() {
-  if (!state.exportDetails) return;
-  if (!state.detailTemplate) throw new Error("请先上传明细表模板");
-  const { detailOutputName, fillDetailWorkbook } = await import("./detail-workbook.js");
-  const invoiceRows = state.files
+function getDetailInvoiceRows() {
+  return state.files
     .filter((file) => !file.isDemo)
     .map((file) => ({
       ...file.details,
       invoiceType: INVOICE_TYPES[file.invoiceType],
     }));
-  if (!invoiceRows.length) throw new Error("演示发票不写入明细表，请先上传真实发票");
-
-  const bytes = await fillDetailWorkbook(state.detailTemplate.bytes.slice(0), invoiceRows);
-  triggerBlobDownload(
-    new Blob([bytes], {
-      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    }),
-    detailOutputName(state.detailTemplate.name),
-  );
 }
 
-async function exportDetailOnly() {
+async function generateDetailWorkbook() {
+  if (!state.exportDetails) throw new Error("请先开启明细表导出");
+  if (!state.detailTemplate) throw new Error("请先上传明细表模板");
+  const { detailOutputName, fillDetailWorkbook } = await import("./detail-workbook.js");
+  const invoiceRows = getDetailInvoiceRows();
+  if (!invoiceRows.length) throw new Error("演示发票不写入明细表，请先上传真实发票");
+  const { bytes, preview } = await fillDetailWorkbook(
+    state.detailTemplate.bytes.slice(0),
+    invoiceRows,
+  );
+  state.detailOutput = {
+    bytes,
+    fileName: detailOutputName(state.detailTemplate.name),
+    previewCanvas: createDetailPreviewCanvas(preview),
+  };
+}
+
+async function handleGenerateDetail() {
   if (els.detailExportButton.disabled) return;
   els.detailExportButton.disabled = true;
   els.detailExportButtonText.textContent = "正在生成…";
   try {
-    await exportDetailWorkbook();
-    showToast("明细表已生成，下载已开始");
+    await generateDetailWorkbook();
+    clearGeneratedDownload();
+    rebuildPages();
+    state.currentSheet = Math.max(0, Math.ceil(state.pages.length / 2) - 1);
+    updateControls();
+    renderPreview();
+    els.detailExportButtonText.textContent = "重新生成明细表";
+    showToast("明细表已生成，并已加入 PDF 预览");
   } catch (error) {
     console.error(error);
     showToast(error.message || "明细表生成失败");
-  } finally {
-    els.detailExportButtonText.textContent = "重新导出明细表";
-    updateControls();
+    els.detailExportButtonText.textContent = "生成明细表并加入预览";
+  }
+  updateControls();
+}
+
+function downloadDetailWorkbook() {
+  if (!state.detailOutput) return;
+  triggerBlobDownload(
+    new Blob([state.detailOutput.bytes], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    }),
+    state.detailOutput.fileName,
+  );
+  showToast("Excel 明细表下载已开始");
+}
+
+function invalidateDetailOutput() {
+  state.detailOutput = null;
+  if (els.detailExportButtonText) {
+    els.detailExportButtonText.textContent = "生成明细表并加入预览";
   }
 }
 
@@ -580,6 +806,10 @@ function clearGeneratedDownload() {
 
 async function exportPdf() {
   if (!state.pages.length) return;
+  if (state.exportDetails && !state.detailOutput) {
+    showToast("请先生成明细表，再导出 PDF");
+    return;
+  }
   clearGeneratedDownload();
   els.exportButton.disabled = true;
   els.exportButtonText.textContent = "正在本地生成…";
@@ -588,10 +818,9 @@ async function exportPdf() {
     const bytes = await createOutputPdf();
     state.exportUrl = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
     triggerDownload(state.exportUrl);
-    await exportDetailWorkbook();
     els.successCard.hidden = false;
     els.manualButton.hidden = false;
-    showToast(state.exportDetails ? "PDF 和明细表已生成" : "PDF 已生成，下载已开始");
+    showToast("PDF 已按当前预览生成，下载已开始");
   } catch (error) {
     console.error(error);
     showToast(error.message || "生成失败，请检查文件后重试");
@@ -625,6 +854,7 @@ els.fileInput.addEventListener("change", (event) => addFiles(event.target.files)
 els.dropzone.addEventListener("drop", (event) => addFiles(event.dataTransfer.files));
 els.clearButton.addEventListener("click", () => {
   state.files = [];
+  invalidateDetailOutput();
   clearGeneratedDownload();
   rebuildPages();
 });
@@ -664,7 +894,7 @@ els.detailToggle.addEventListener("change", (event) => {
   state.exportDetails = event.target.checked;
   els.detailTemplateBlock.hidden = !state.exportDetails;
   clearGeneratedDownload();
-  updateControls();
+  rebuildPages();
 });
 els.detailTemplateInput.addEventListener("change", async (event) => {
   const file = event.target.files?.[0];
@@ -678,12 +908,14 @@ els.detailTemplateInput.addEventListener("change", async (event) => {
     name: file.name,
     bytes: await file.arrayBuffer(),
   };
+  invalidateDetailOutput();
   els.detailTemplateName.textContent = file.name;
   clearGeneratedDownload();
-  updateControls();
+  rebuildPages();
   showToast("明细表模板已读取");
 });
-els.detailExportButton.addEventListener("click", exportDetailOnly);
+els.detailExportButton.addEventListener("click", handleGenerateDetail);
+els.detailDownloadButton.addEventListener("click", downloadDetailWorkbook);
 els.exportButton.addEventListener("click", exportPdf);
 els.manualButton.addEventListener("click", () => {
   if (state.exportUrl) triggerDownload(state.exportUrl);
