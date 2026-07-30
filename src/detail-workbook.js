@@ -4,6 +4,8 @@ const FIELD_ALIASES = {
   fileName: ["文件名", "源文件", "发票文件"],
   invoiceType: ["发票类型", "票据类型"],
   expenseCategory: ["费用类型", "费用类别", "报销类型", "报销类别", "费用科目", "科目", "类别"],
+  categoryLevel1: ["一类明细", "一级明细"],
+  categoryLevel2: ["二类明细", "二级明细"],
   invoiceCode: ["发票代码", "票据代码"],
   invoiceNumber: ["发票号码", "发票号", "票据号码", "票号"],
   issueDate: ["开票日期", "发票日期", "日期", "乘车日期"],
@@ -69,7 +71,17 @@ export async function inspectDetailTemplate(templateBytes) {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(templateBytes);
   const worksheets = workbook.worksheets.slice(0, 8);
+  const totalSheet = worksheets.find((worksheet) => worksheet.name === "费用报销总表");
+  const totalHeaders = totalSheet
+    ? Array.from({ length: 9 }, (_, index) => totalSheet.getCell(2, index + 1).text.trim())
+    : [];
+  const policyProfile =
+    totalHeaders.join("|") ===
+    "序号|费用类型|一类明细|二类明细|票据类型|日期|名称|金额|备注"
+      ? "ruijie_reimbursement_v6"
+      : "";
   return {
+    policyProfile,
     selectableColumns: detectSelectableColumns(worksheets),
     snapshot: {
       sheets: worksheets.map((worksheet) => {

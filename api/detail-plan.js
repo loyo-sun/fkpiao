@@ -1,7 +1,14 @@
+import {
+  RUIJIE_POLICY_ID,
+  RUIJIE_REIMBURSEMENT_POLICY,
+} from "./reimbursement-policy.js";
+
 const ALLOWED_FIELDS = [
   "fileName",
   "invoiceType",
   "expenseCategory",
+  "categoryLevel1",
+  "categoryLevel2",
   "invoiceCode",
   "invoiceNumber",
   "issueDate",
@@ -105,6 +112,8 @@ export default async function handler(req, res) {
           headerRow: Number(body.confirmedHeader.headerRow),
         }
       : null;
+  const policy =
+    body.policyProfile === RUIJIE_POLICY_ID ? RUIJIE_REIMBURSEMENT_POLICY : null;
   const templateImages = Array.isArray(body.templateImages)
     ? body.templateImages.slice(0, 4)
     : [];
@@ -147,7 +156,10 @@ export default async function handler(req, res) {
           invoiceType: "票据本身的类型，例如普票、专票、火车票、高铁票",
           expenseCategory:
             "模板中的费用类型、报销类别或费用科目；必须根据发票内容选择模板数据验证范围中的值",
+          categoryLevel1: "模板的一类明细，按制度归类明细选择",
+          categoryLevel2: "模板的二类明细，填写更具体的费用内容、项目或产品说明",
         },
+        reimbursementPolicy: policy,
         requirements: [
           "严格沿用模板的标题、表头、列顺序、合并关系和视觉风格",
           "所有模板内容和全部明细必须放在一张A5横向页面中，不得分页",
@@ -160,6 +172,13 @@ export default async function handler(req, res) {
           "模板中无法映射到标准字段的明细列，使用records.cells按列号填写，不允许因为字段不在allowedFields中而遗漏",
           "标题区、汇总区或其他非明细填写区域使用templateCells填写，但不得覆盖模板标题、表头、公式和固定说明文字",
           "确实无法从发票确认的信息填写“未识别”，不得留空，也不得编造金额、号码、日期、单位或行程",
+          ...(policy
+            ? [
+                "费用类型、一类明细、二类明细和票据类型必须严格遵循reimbursementPolicy",
+                "餐饮金额≤200元归差旅费用，>200元归招待费用",
+                "火车票和高铁票分别输出对应票据类型，并归入差旅费用",
+              ]
+            : []),
         ],
         template: compactTemplate,
         confirmedHeader,

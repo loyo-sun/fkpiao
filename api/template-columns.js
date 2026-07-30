@@ -1,3 +1,5 @@
+import { RUIJIE_POLICY_ID } from "./reimbursement-policy.js";
+
 const MAX_TEMPLATE_IMAGE_LENGTH = 1_800_000;
 
 function send(res, status, body) {
@@ -23,8 +25,6 @@ export default async function handler(req, res) {
     res.setHeader("Allow", "POST");
     return send(res, 405, { error: "Method not allowed" });
   }
-  if (!process.env.OPENAI_API_KEY) return send(res, 503, { error: "AI_NOT_CONFIGURED" });
-
   let body;
   try {
     body = typeof req.body === "string" ? JSON.parse(req.body) : req.body || {};
@@ -34,6 +34,25 @@ export default async function handler(req, res) {
   const sheets = Array.isArray(body.template?.sheets) ? body.template.sheets.slice(0, 8) : [];
   const images = Array.isArray(body.templateImages) ? body.templateImages.slice(0, 4) : [];
   if (!sheets.length) return send(res, 400, { error: "Invalid template" });
+  if (body.policyProfile === RUIJIE_POLICY_ID) {
+    const sheet = sheets.find((item) => item.name === "费用报销总表");
+    const columns = Array.from({ length: 9 }, (_, index) => {
+      const column = index + 1;
+      const sourceCell = sheet?.cells?.find((cell) => cell.r === 2 && cell.c === column);
+      return { column, label: String(sourceCell?.v || "").trim() };
+    }).filter((item) => item.label);
+    if (sheet && columns.length === 9) {
+      return send(res, 200, {
+        data: {
+          targetSheet: "费用报销总表",
+          headerRow: 2,
+          columns,
+          confidence: 1,
+        },
+      });
+    }
+  }
+  if (!process.env.OPENAI_API_KEY) return send(res, 503, { error: "AI_NOT_CONFIGURED" });
   if (
     images.some(
       (image) =>

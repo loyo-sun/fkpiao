@@ -748,6 +748,19 @@ h2 {
   background: #f8faf9;
 }
 
+.policy-template-download {
+  display: block;
+  margin-top: 7px;
+  color: var(--green);
+  font-size: 8px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.policy-template-download:hover {
+  text-decoration: underline;
+}
+
 .detail-columns > strong {
   display: block;
   margin-bottom: 7px;

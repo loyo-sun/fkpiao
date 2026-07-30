@@ -755,6 +755,7 @@ async function requestDetailPlan(template, templateImages, invoiceRows, required
       templateImages,
       requiredColumns,
       confirmedHeader: state.detailHeader,
+      policyProfile: state.detailTemplate?.inspection?.policyProfile || "",
       invoices: invoiceRows.slice(0, 80),
     }),
   });
@@ -768,11 +769,11 @@ async function requestDetailPlan(template, templateImages, invoiceRows, required
   return result.data;
 }
 
-async function requestTemplateColumns(template, templateImages) {
+async function requestTemplateColumns(template, templateImages, policyProfile) {
   const response = await fetch("/api/template-columns", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ template, templateImages }),
+    body: JSON.stringify({ template, templateImages, policyProfile }),
   });
   const result = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -976,7 +977,11 @@ els.detailTemplateInput.addEventListener("change", async (event) => {
       sheetName: model.sheetName,
       dataUrl: createDetailPreviewCanvas(model).toDataURL("image/jpeg", 0.82),
     }));
-    const header = await requestTemplateColumns(inspection.snapshot, templateImages);
+    const header = await requestTemplateColumns(
+      inspection.snapshot,
+      templateImages,
+      inspection.policyProfile,
+    );
     state.detailTemplate = { name: file.name, bytes, inspection };
     state.detailHeader = {
       targetSheet: header.targetSheet,
