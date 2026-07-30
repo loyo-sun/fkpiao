@@ -35,7 +35,7 @@ function parseContent(result) {
   return JSON.parse(content.replace(/^```json\s*|\s*```$/g, ""));
 }
 
-function validatePlan(plan, sheetNames) {
+function validatePlan(plan, sheetNames, invoiceCount) {
   if (!sheetNames.includes(plan?.targetSheet)) return false;
   if (!Number.isInteger(plan.headerRow) || !Number.isInteger(plan.firstDataRow)) return false;
   if (plan.firstDataRow <= plan.headerRow) return false;
@@ -57,7 +57,14 @@ function validatePlan(plan, sheetNames) {
       item.column >= 1 &&
       item.column <= 80,
   );
-  return new Set(valid.map((item) => item.field)).size >= 2;
+  const records = Array.isArray(plan.records) ? plan.records : [];
+  const sourceIndexes = new Set(records.map((record) => record?.sourceIndex));
+  return (
+    new Set(valid.map((item) => item.field)).size >= 2 &&
+    Array.from({ length: invoiceCount }, (_, index) => index).every((index) =>
+      sourceIndexes.has(index),
+    )
+  );
 }
 
 export default async function handler(req, res) {
@@ -127,7 +134,10 @@ export default async function handler(req, res) {
           "内容无法在A5页面中完整显示时必须换行，所有内容都要完整展示，不得截断或省略",
           "字段只映射到模板实际存在且语义明确的列",
           "模板字段存在数据验证或允许值范围时，输出值必须严格属于该范围，尤其是类型字段",
-          "分析全部发票；records仅返回需要纠正、归纳或补充的字段，金额不得猜测",
+          "分析全部发票；records必须为每张发票返回一条记录，并完整提供模板所需的标准字段和自定义列内容",
+          "模板中无法映射到标准字段的明细列，使用records.cells按列号填写，不允许因为字段不在allowedFields中而遗漏",
+          "标题区、汇总区或其他非明细填写区域使用templateCells填写，但不得覆盖模板标题、表头、公式和固定说明文字",
+          "确实无法从发票确认的信息填写“未识别”，不得留空，也不得编造金额、号码、日期、单位或行程",
         ],
         template: compactTemplate,
         invoices,
@@ -159,12 +169,12 @@ export default async function handler(req, res) {
           "gpt-5.6-luna",
         store: false,
         reasoning_effort: "none",
-        max_completion_tokens: 6000,
+        max_completion_tokens: Math.min(16_000, 1800 + invoices.length * 180),
         messages: [
           {
             role: "system",
             content:
-              "你是专业的Excel报销明细表设计与内容分析器。你会同时阅读模板的结构化数据和视觉预览，理解标题、表头、数据区、字体、列宽、行高、合并单元格和打印范围。输出填写及A5分页计划，不重新设计用户模板。每页必须清晰可读；宽表优先A5横向，按合理行数分页并重复标题和表头。分析发票内容时只纠正确凿错误或生成模板明确需要的摘要，绝不编造金额、号码、日期、单位或行程。在生成输出表格时，要严格按照用户提供的模板进行输出。输出内容如果无法在A5页面中完整展示，则进行换行，确保所有内容都在页面中展示。必须区分invoiceType（普票、专票、火车票、高铁票等票据类型）和expenseCategory（交通费、办公费、差旅费等费用类别）。若模板中的类型、类别或科目字段设置了允许值范围，必须从该范围中选择expenseCategory，不得把发票类型写入费用类别列。",
+              "你是专业的Excel报销明细表设计与内容分析器。你会同时阅读模板的结构化数据和视觉预览，理解标题、表头、数据区、字体、列宽、行高、合并单元格和打印范围。输出填写及A5分页计划，不重新设计用户模板。必须完整填写用户模板：每张发票对应一条records记录，所有需要填写的明细列都必须有内容；标准字段写入values，自定义列写入cells，非明细填写区域写入templateCells。不得遗漏模板列。每页必须清晰可读；宽表优先A5横向，按合理行数分页并重复标题和表头。输出内容无法在A5页面中完整展示时必须换行，确保全部展示。必须区分invoiceType（普票、专票、火车票、高铁票等票据类型）和expenseCategory（交通费、办公费、差旅费等费用类别）。模板中的类型、类别或科目设置了允许值范围时，必须从该范围选择。只能从发票中提取或合理归纳内容，确实无法确认时填写“未识别”，绝不编造金额、号码、日期、单位或行程。",
           },
           {
             role: "user",
@@ -200,6 +210,20 @@ export default async function handler(req, res) {
                     required: ["field", "column"],
                   },
                 },
+                templateCells: {
+                  type: "array",
+                  maxItems: 100,
+                  items: {
+                    type: "object",
+                    additionalProperties: false,
+                    properties: {
+                      row: { type: "integer", minimum: 1, maximum: 200 },
+                      column: { type: "integer", minimum: 1, maximum: 80 },
+                      value: { type: ["string", "number", "null"] },
+                    },
+                    required: ["row", "column", "value"],
+                  },
+                },
                 records: {
                   type: "array",
                   maxItems: 80,
@@ -222,8 +246,21 @@ export default async function handler(req, res) {
                           required: ["field", "value"],
                         },
                       },
+                      cells: {
+                        type: "array",
+                        maxItems: 80,
+                        items: {
+                          type: "object",
+                          additionalProperties: false,
+                          properties: {
+                            column: { type: "integer", minimum: 1, maximum: 80 },
+                            value: { type: ["string", "number", "null"] },
+                          },
+                          required: ["column", "value"],
+                        },
+                      },
                     },
-                    required: ["sourceIndex", "values"],
+                    required: ["sourceIndex", "values", "cells"],
                   },
                 },
                 confidence: { type: "number", minimum: 0, maximum: 1 },
@@ -236,6 +273,7 @@ export default async function handler(req, res) {
                 "lastColumn",
                 "rowsPerPage",
                 "mappings",
+                "templateCells",
                 "records",
                 "confidence",
               ],
@@ -247,7 +285,7 @@ export default async function handler(req, res) {
     });
     if (!response.ok) return send(res, 502, { error: "AI_UPSTREAM_ERROR" });
     const plan = parseContent(await response.json());
-    if (!validatePlan(plan, sheetNames)) {
+    if (!validatePlan(plan, sheetNames, invoices.length)) {
       return send(res, 502, { error: "AI_INVALID_RESPONSE" });
     }
     return send(res, 200, { data: plan });

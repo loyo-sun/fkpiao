@@ -263,16 +263,48 @@ export async function fillDetailWorkbook(templateBytes, invoices, plan) {
   const aiRecords = new Map(
     (plan.records || []).map((record) => [
       Number(record.sourceIndex),
-      Object.fromEntries(
-        (record.values || [])
-          .filter((item) => DETAIL_FIELDS.includes(item.field))
-          .map((item) => [item.field, item.value]),
-      ),
+      {
+        values: Object.fromEntries(
+          (record.values || [])
+            .filter((item) => DETAIL_FIELDS.includes(item.field))
+            .map((item) => [item.field, item.value]),
+        ),
+        cells: new Map(
+          (record.cells || [])
+            .filter(
+              (item) =>
+                Number.isInteger(Number(item.column)) &&
+                Number(item.column) >= 1 &&
+                Number(item.column) <= lastColumn,
+            )
+            .map((item) => [Number(item.column), item.value]),
+        ),
+      },
     ]),
   );
+  for (const item of plan.templateCells || []) {
+    const row = Number(item.row);
+    const column = Number(item.column);
+    if (
+      !Number.isInteger(row) ||
+      !Number.isInteger(column) ||
+      row < 1 ||
+      row > 200 ||
+      column < 1 ||
+      column > lastColumn ||
+      row === headerRow
+    ) {
+      continue;
+    }
+    const cell = worksheet.getCell(row, column);
+    if (!cell.formula && (!cell.text || /待填写|请输入|未填写|____|—{2,}/.test(cell.text))) {
+      cell.value = item.value ?? "未识别";
+    }
+  }
 
   invoices.forEach((invoice, index) => {
-    const resolvedInvoice = { ...invoice, ...(aiRecords.get(index) || {}) };
+    const aiRecord = aiRecords.get(index) || { values: {}, cells: new Map() };
+    const resolvedInvoice = { ...invoice, ...aiRecord.values };
     const targetRow = worksheet.getRow(firstDataRow + index);
     const baseRowHeight = styleRow.height || 18;
     let requiredRowHeight = baseRowHeight;
@@ -289,6 +321,7 @@ export async function fillDetailWorkbook(templateBytes, invoices, plan) {
           value = matched || (targetCell.dataValidation?.allowBlank ? "" : allowedValues[0]);
         }
       }
+      if (value === "" || value == null) value = "未识别";
       targetCell.value = ["invoiceCode", "invoiceNumber", "trainNumber"].includes(field)
         ? { richText: [{ text: String(value) }] }
         : value;
@@ -314,6 +347,39 @@ export async function fillDetailWorkbook(templateBytes, invoices, plan) {
         requiredRowHeight = Math.max(requiredRowHeight, baseRowHeight * estimatedLines);
       }
     });
+    aiRecord.cells.forEach((rawValue, column) => {
+      const targetCell = targetRow.getCell(column);
+      let value = rawValue ?? "未识别";
+      const allowedValues = allowedCellValues(workbook, targetCell);
+      if (allowedValues.length && !allowedValues.includes(String(value))) {
+        value =
+          matchAllowedValue(allowedValues, value, resolvedInvoice) ||
+          (targetCell.dataValidation?.allowBlank ? "" : allowedValues[0]);
+      }
+      targetCell.value = value;
+    });
+    for (let column = 1; column <= lastColumn; column += 1) {
+      const header = worksheet.getCell(headerRow, column).text.trim();
+      const targetCell = targetRow.getCell(column);
+      if (header && !targetCell.formula && !targetCell.text.trim()) {
+        targetCell.value = /序号|行号|编号/.test(header)
+          ? index + 1
+          : /备注/.test(header)
+            ? "无"
+            : "未识别";
+      }
+      const displayText = targetCell.text;
+      const columnWidth = worksheet.getColumn(column).width || 10;
+      const estimatedLines = Math.max(1, Math.ceil(displayText.length / Math.max(4, columnWidth)));
+      if (estimatedLines > 1) {
+        targetCell.alignment = {
+          ...(targetCell.alignment || {}),
+          wrapText: true,
+          vertical: "middle",
+        };
+        requiredRowHeight = Math.max(requiredRowHeight, baseRowHeight * estimatedLines);
+      }
+    }
     targetRow.height = Math.min(150, requiredRowHeight);
     targetRow.commit();
   });
