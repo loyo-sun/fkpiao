@@ -2,7 +2,8 @@ import ExcelJS from "exceljs";
 
 const FIELD_ALIASES = {
   fileName: ["文件名", "源文件", "发票文件"],
-  invoiceType: ["发票类型", "票据类型", "类型"],
+  invoiceType: ["发票类型", "票据类型"],
+  expenseCategory: ["费用类型", "费用类别", "报销类型", "报销类别", "费用科目", "科目", "类别"],
   invoiceCode: ["发票代码", "票据代码"],
   invoiceNumber: ["发票号码", "发票号", "票据号码", "票号"],
   issueDate: ["开票日期", "发票日期", "日期", "乘车日期"],
@@ -176,6 +177,47 @@ function invoiceTypeKind(value) {
   return "";
 }
 
+function normalizedValue(value) {
+  return String(value || "")
+    .replace(/[\s（）()【】[\]、，,./_-]/g, "")
+    .toLowerCase();
+}
+
+function expenseCategoryHints(invoice) {
+  const text = Object.values(invoice || {}).join(" ");
+  const hints = [];
+  if (/高铁|动车|火车|铁路|车票|机票|出租|网约车|滴滴|公交|地铁|交通/.test(text)) {
+    hints.push("交通", "差旅", "车船");
+  }
+  if (/酒店|宾馆|住宿|房费/.test(text)) hints.push("住宿", "差旅");
+  if (/餐饮|餐费|饭店|食品/.test(text)) hints.push("餐饮", "招待");
+  if (/办公|文具|耗材|打印|纸张/.test(text)) hints.push("办公");
+  if (/服务|咨询|技术/.test(text)) hints.push("服务");
+  if (/加油|汽油|柴油|燃油/.test(text)) hints.push("燃油", "车辆", "交通");
+  if (/电话|通信|宽带|网络/.test(text)) hints.push("通信");
+  return hints;
+}
+
+function matchAllowedValue(allowedValues, value, invoice) {
+  const normalized = normalizedValue(value);
+  const exact = allowedValues.find((allowed) => normalizedValue(allowed) === normalized);
+  if (exact) return exact;
+  const contained = allowedValues.find((allowed) => {
+    const candidate = normalizedValue(allowed);
+    return candidate && normalized && (candidate.includes(normalized) || normalized.includes(candidate));
+  });
+  if (contained) return contained;
+  const kind = invoiceTypeKind(value);
+  const sameInvoiceKind = kind
+    ? allowedValues.find((allowed) => invoiceTypeKind(allowed) === kind)
+    : null;
+  if (sameInvoiceKind) return sameInvoiceKind;
+  const hints = expenseCategoryHints(invoice);
+  return allowedValues.find((allowed) =>
+    hints.some((hint) => normalizedValue(allowed).includes(normalizedValue(hint))),
+  );
+}
+
 function allowedCellValues(workbook, cell) {
   const rule = cell.dataValidation;
   const source = rule?.type === "list" ? rule.formulae?.[0] : null;
@@ -240,15 +282,11 @@ export async function fillDetailWorkbook(templateBytes, invoices, plan) {
     mappings.forEach((field, column) => {
       const targetCell = targetRow.getCell(column);
       let value = resolvedInvoice[field] ?? "";
-      if (field === "invoiceType") {
+      if (field === "invoiceType" || field === "expenseCategory") {
         const allowedValues = allowedCellValues(workbook, targetCell);
         if (allowedValues.length && !allowedValues.includes(String(value))) {
-          const kind = invoiceTypeKind(value);
-          const matched = allowedValues.find((allowedValue) => invoiceTypeKind(allowedValue) === kind);
-          if (!matched) {
-            throw new Error(`第 ${index + 1} 条发票类型不在模板允许范围内`);
-          }
-          value = matched;
+          const matched = matchAllowedValue(allowedValues, value, resolvedInvoice);
+          value = matched || (targetCell.dataValidation?.allowBlank ? "" : allowedValues[0]);
         }
       }
       targetCell.value = ["invoiceCode", "invoiceNumber", "trainNumber"].includes(field)
