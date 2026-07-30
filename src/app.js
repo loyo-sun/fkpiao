@@ -545,16 +545,15 @@ function createDetailPreviewCanvas(model) {
   canvas.height = 990;
   const ctx = canvas.getContext("2d");
   const margin = 55;
-  const titleHeight = 54;
   const availableWidth = canvas.width - margin * 2;
-  const availableHeight = canvas.height - margin * 2 - titleHeight;
+  const availableHeight = canvas.height - margin * 2;
   const modelWidth = model.columnWidths.reduce((sum, width) => sum + width, 0);
   const modelHeight = model.rowHeights.reduce((sum, height) => sum + height, 0);
   const scale = Math.min(availableWidth / modelWidth, availableHeight / modelHeight, 2);
   const tableWidth = modelWidth * scale;
   const tableHeight = modelHeight * scale;
   const startX = (canvas.width - tableWidth) / 2;
-  const startY = margin + titleHeight + Math.max(0, (availableHeight - tableHeight) / 2);
+  const startY = margin + Math.max(0, (availableHeight - tableHeight) / 2);
   const xs = [startX];
   const ys = [startY];
 
@@ -563,36 +562,21 @@ function createDetailPreviewCanvas(model) {
 
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = "#25342c";
-  ctx.font = '700 25px "PingFang SC", "Microsoft YaHei", sans-serif';
-  ctx.textAlign = "left";
-  ctx.textBaseline = "middle";
-  ctx.fillText(model.sheetName || "发票明细表", startX, margin + titleHeight / 2);
 
   for (const cell of model.cells) {
     const x = xs[cell.column];
     const y = ys[cell.row];
-    const width = xs[cell.column + 1] - x;
-    const height = ys[cell.row + 1] - y;
+    const width = xs[Math.min(model.columnCount, cell.column + (cell.columnSpan || 1))] - x;
+    const height = ys[Math.min(model.rowCount, cell.row + (cell.rowSpan || 1))] - y;
     ctx.fillStyle = cell.fill;
     ctx.fillRect(x, y, width, height);
     drawCellText(ctx, cell.text, x, y, width, height, cell, scale);
+    ctx.strokeStyle = "#cfd6d1";
+    ctx.lineWidth = Math.max(1, scale * 0.7);
+    ctx.beginPath();
+    ctx.rect(x, y, width, height);
+    ctx.stroke();
   }
-
-  ctx.strokeStyle = "#cfd6d1";
-  ctx.lineWidth = Math.max(1, scale * 0.7);
-  xs.forEach((x) => {
-    ctx.beginPath();
-    ctx.moveTo(x, startY);
-    ctx.lineTo(x, startY + tableHeight);
-    ctx.stroke();
-  });
-  ys.forEach((y) => {
-    ctx.beginPath();
-    ctx.moveTo(startX, y);
-    ctx.lineTo(startX + tableWidth, y);
-    ctx.stroke();
-  });
   return canvas;
 }
 
@@ -741,15 +725,49 @@ function getDetailInvoiceRows() {
     }));
 }
 
+async function requestDetailPlan(template, invoiceRows) {
+  const response = await fetch("/api/detail-plan", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      template,
+      invoices: invoiceRows.slice(0, 3).map((invoice) => ({
+        invoiceType: invoice.invoiceType || "",
+        invoiceNumber: invoice.invoiceNumber || "",
+        issueDate: invoice.issueDate || "",
+        buyerName: invoice.buyerName || "",
+        sellerName: invoice.sellerName || "",
+        summary: invoice.summary || "",
+        totalAmount: invoice.totalAmount ?? null,
+        trainNumber: invoice.trainNumber || "",
+        route: invoice.route || "",
+      })),
+    }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    if (result.error === "AI_NOT_CONFIGURED") {
+      throw new Error("Vercel 尚未配置 AI API，无法分析明细表模板");
+    }
+    throw new Error("AI 未能理解该模板，请检查模板表头后重试");
+  }
+  return result.data;
+}
+
 async function generateDetailWorkbook() {
   if (!state.exportDetails) throw new Error("请先开启明细表导出");
   if (!state.detailTemplate) throw new Error("请先上传明细表模板");
-  const { detailOutputName, fillDetailWorkbook } = await import("./detail-workbook.js");
+  const { detailOutputName, fillDetailWorkbook, inspectDetailTemplate } =
+    await import("./detail-workbook.js");
   const invoiceRows = getDetailInvoiceRows();
   if (!invoiceRows.length) throw new Error("演示发票不写入明细表，请先上传真实发票");
+  const templateBytes = state.detailTemplate.bytes.slice(0);
+  const templateSnapshot = await inspectDetailTemplate(templateBytes);
+  const plan = await requestDetailPlan(templateSnapshot, invoiceRows);
   const { bytes, preview } = await fillDetailWorkbook(
-    state.detailTemplate.bytes.slice(0),
+    templateBytes,
     invoiceRows,
+    plan,
   );
   state.detailOutput = {
     bytes,
@@ -761,7 +779,7 @@ async function generateDetailWorkbook() {
 async function handleGenerateDetail() {
   if (els.detailExportButton.disabled) return;
   els.detailExportButton.disabled = true;
-  els.detailExportButtonText.textContent = "正在生成…";
+  els.detailExportButtonText.textContent = "AI 正在分析模板…";
   try {
     await generateDetailWorkbook();
     clearGeneratedDownload();

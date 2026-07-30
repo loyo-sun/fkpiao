@@ -6,6 +6,14 @@ function send(res, status, body) {
   res.status(status).json(body);
 }
 
+function apiUrl() {
+  const base = (process.env.OPENAI_BASE_URL || "https://api.openai-hub.net/v1").replace(
+    /\/+$/,
+    "",
+  );
+  return `${base}/chat/completions`;
+}
+
 export default async function handler(req, res) {
   res.setHeader("Cache-Control", "no-store");
   if (req.method !== "POST") {
@@ -50,17 +58,17 @@ export default async function handler(req, res) {
   }
 
   try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    const response = await fetch(apiUrl(), {
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: process.env.OPENAI_INVOICE_MODEL || "gpt-4o-mini",
+        model: process.env.OPENAI_INVOICE_MODEL || "gpt-5.6-luna",
         store: false,
-        temperature: 0,
-        max_tokens: 180,
+        reasoning_effort: "none",
+        max_completion_tokens: 300,
         messages: [
           {
             role: "system",
