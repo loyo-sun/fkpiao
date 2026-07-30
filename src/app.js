@@ -65,6 +65,7 @@ const state = {
   exportDetails: false,
   detailTemplate: null,
   detailRequiredColumns: [],
+  detailHeader: null,
   detailOutput: null,
   aiAvailable: null,
   exportUrl: null,
@@ -753,6 +754,7 @@ async function requestDetailPlan(template, templateImages, invoiceRows, required
       template,
       templateImages,
       requiredColumns,
+      confirmedHeader: state.detailHeader,
       invoices: invoiceRows.slice(0, 80),
     }),
   });
@@ -766,6 +768,22 @@ async function requestDetailPlan(template, templateImages, invoiceRows, required
   return result.data;
 }
 
+async function requestTemplateColumns(template, templateImages) {
+  const response = await fetch("/api/template-columns", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ template, templateImages }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    if (result.error === "AI_NOT_CONFIGURED") {
+      throw new Error("Vercel 尚未配置 AI API，无法识别 Excel 表头");
+    }
+    throw new Error("AI 未能识别模板中的明细表表头");
+  }
+  return result.data;
+}
+
 async function generateDetailWorkbook() {
   if (!state.exportDetails) throw new Error("请先开启明细表导出");
   if (!state.detailTemplate) throw new Error("请先上传明细表模板");
@@ -774,7 +792,8 @@ async function generateDetailWorkbook() {
   const invoiceRows = getDetailInvoiceRows();
   if (!invoiceRows.length) throw new Error("演示发票不写入明细表，请先上传真实发票");
   const templateBytes = state.detailTemplate.bytes.slice(0);
-  const inspection = await inspectDetailTemplate(templateBytes);
+  const inspection =
+    state.detailTemplate.inspection || (await inspectDetailTemplate(templateBytes));
   const requiredColumns = state.detailRequiredColumns.slice();
   if (!requiredColumns.length) throw new Error("请至少选择一个必填列");
   const templateImages = inspection.previewModels.map((model) => ({
@@ -787,6 +806,8 @@ async function generateDetailWorkbook() {
     invoiceRows,
     requiredColumns,
   );
+  plan.targetSheet = state.detailHeader.targetSheet;
+  plan.headerRow = state.detailHeader.headerRow;
   plan.requiredColumns = requiredColumns;
   const { bytes, previews } = await fillDetailWorkbook(
     templateBytes,
@@ -946,26 +967,45 @@ els.detailTemplateInput.addEventListener("change", async (event) => {
     event.target.value = "";
     return;
   }
-  const bytes = await file.arrayBuffer();
-  const { inspectDetailTemplate } = await import("./detail-workbook.js");
-  const inspection = await inspectDetailTemplate(bytes.slice(0));
-  state.detailTemplate = {
-    name: file.name,
-    bytes,
-  };
-  state.detailRequiredColumns = inspection.selectableColumns.columns;
-  els.detailColumnList.innerHTML = state.detailRequiredColumns
-    .map(
-      (item) =>
-        `<label><input type="checkbox" data-column="${item.column}" checked /><span>${escapeHtml(item.label)}</span></label>`,
-    )
-    .join("");
-  els.detailColumns.hidden = state.detailRequiredColumns.length === 0;
-  invalidateDetailOutput();
-  els.detailTemplateName.textContent = file.name;
-  clearGeneratedDownload();
-  rebuildPages();
-  showToast("明细表模板已读取");
+  els.detailTemplateName.textContent = "AI 正在识别 Excel 表头…";
+  try {
+    const bytes = await file.arrayBuffer();
+    const { inspectDetailTemplate } = await import("./detail-workbook.js");
+    const inspection = await inspectDetailTemplate(bytes.slice(0));
+    const templateImages = inspection.previewModels.map((model) => ({
+      sheetName: model.sheetName,
+      dataUrl: createDetailPreviewCanvas(model).toDataURL("image/jpeg", 0.82),
+    }));
+    const header = await requestTemplateColumns(inspection.snapshot, templateImages);
+    state.detailTemplate = { name: file.name, bytes, inspection };
+    state.detailHeader = {
+      targetSheet: header.targetSheet,
+      headerRow: header.headerRow,
+    };
+    state.detailRequiredColumns = header.columns;
+    els.detailColumnList.innerHTML = header.columns
+      .map(
+        (item) =>
+          `<label><input type="checkbox" data-column="${item.column}" checked /><span>${escapeHtml(item.label)}</span></label>`,
+      )
+      .join("");
+    els.detailColumns.hidden = false;
+    invalidateDetailOutput();
+    els.detailTemplateName.textContent = `${file.name} · ${header.targetSheet} 第 ${header.headerRow} 行表头`;
+    clearGeneratedDownload();
+    rebuildPages();
+    showToast(`已识别 ${header.columns.length} 个 Excel 表头`);
+  } catch (error) {
+    state.detailTemplate = null;
+    state.detailHeader = null;
+    state.detailRequiredColumns = [];
+    els.detailColumns.hidden = true;
+    els.detailColumnList.innerHTML = "";
+    els.detailTemplateName.textContent = error.message || "模板表头识别失败";
+    event.target.value = "";
+    updateControls();
+    showToast(error.message || "模板表头识别失败");
+  }
 });
 els.detailColumnList.addEventListener("change", () => {
   const allColumns = state.detailTemplate

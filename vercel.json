@@ -8,6 +8,9 @@
     },
     "api/detail-plan.js": {
       "maxDuration": 30
+    },
+    "api/template-columns.js": {
+      "maxDuration": 30
     }
   }
 }

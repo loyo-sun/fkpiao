@@ -96,6 +96,15 @@ export default async function handler(req, res) {
             item.label,
         )
     : [];
+  const confirmedHeader =
+    body.confirmedHeader &&
+    typeof body.confirmedHeader.targetSheet === "string" &&
+    Number.isInteger(Number(body.confirmedHeader.headerRow))
+      ? {
+          targetSheet: body.confirmedHeader.targetSheet.slice(0, 60),
+          headerRow: Number(body.confirmedHeader.headerRow),
+        }
+      : null;
   const templateImages = Array.isArray(body.templateImages)
     ? body.templateImages.slice(0, 4)
     : [];
@@ -142,6 +151,7 @@ export default async function handler(req, res) {
         requirements: [
           "严格沿用模板的标题、表头、列顺序、合并关系和视觉风格",
           "所有模板内容和全部明细必须放在一张A5横向页面中，不得分页",
+          "targetSheet和headerRow必须严格使用confirmedHeader，不得重新选择表头",
           "内容无法在A5页面中完整显示时必须换行，所有内容都要完整展示，不得截断或省略",
           "只强制填写requiredColumns中用户勾选的列；未勾选列保留模板结构但不得标记为必填",
           "字段只映射到模板实际存在、用户已选择且语义明确的列",
@@ -152,6 +162,7 @@ export default async function handler(req, res) {
           "确实无法从发票确认的信息填写“未识别”，不得留空，也不得编造金额、号码、日期、单位或行程",
         ],
         template: compactTemplate,
+        confirmedHeader,
         requiredColumns,
         invoices,
       }),
@@ -301,7 +312,12 @@ export default async function handler(req, res) {
     });
     if (!response.ok) return send(res, 502, { error: "AI_UPSTREAM_ERROR" });
     const plan = parseContent(await response.json());
-    if (!validatePlan(plan, sheetNames, invoices.length)) {
+    if (
+      !validatePlan(plan, sheetNames, invoices.length) ||
+      (confirmedHeader &&
+        (plan.targetSheet !== confirmedHeader.targetSheet ||
+          plan.headerRow !== confirmedHeader.headerRow))
+    ) {
       return send(res, 502, { error: "AI_INVALID_RESPONSE" });
     }
     return send(res, 200, { data: plan });
