@@ -40,9 +40,6 @@ function validatePlan(plan, sheetNames, invoiceCount) {
   if (!Number.isInteger(plan.headerRow) || !Number.isInteger(plan.firstDataRow)) return false;
   if (plan.firstDataRow <= plan.headerRow) return false;
   if (
-    !Number.isInteger(plan.rowsPerPage) ||
-    plan.rowsPerPage < 4 ||
-    plan.rowsPerPage > 24 ||
     !Number.isInteger(plan.lastColumn) ||
     plan.lastColumn < 1 ||
     plan.lastColumn > 80
@@ -60,7 +57,6 @@ function validatePlan(plan, sheetNames, invoiceCount) {
   const records = Array.isArray(plan.records) ? plan.records : [];
   const sourceIndexes = new Set(records.map((record) => record?.sourceIndex));
   return (
-    new Set(valid.map((item) => item.field)).size >= 2 &&
     Array.from({ length: invoiceCount }, (_, index) => index).every((index) =>
       sourceIndexes.has(index),
     )
@@ -85,6 +81,21 @@ export default async function handler(req, res) {
   }
   const template = body.template;
   const invoices = Array.isArray(body.invoices) ? body.invoices.slice(0, 80) : [];
+  const requiredColumns = Array.isArray(body.requiredColumns)
+    ? body.requiredColumns
+        .slice(0, 30)
+        .map((item) => ({
+          column: Number(item.column),
+          label: String(item.label || "").slice(0, 40),
+        }))
+        .filter(
+          (item) =>
+            Number.isInteger(item.column) &&
+            item.column >= 1 &&
+            item.column <= 80 &&
+            item.label,
+        )
+    : [];
   const templateImages = Array.isArray(body.templateImages)
     ? body.templateImages.slice(0, 4)
     : [];
@@ -130,9 +141,10 @@ export default async function handler(req, res) {
         },
         requirements: [
           "严格沿用模板的标题、表头、列顺序、合并关系和视觉风格",
-          "选择A5横向打印时仍能清晰阅读的每页数据行数，禁止把全部记录强压成一页",
+          "所有模板内容和全部明细必须放在一张A5横向页面中，不得分页",
           "内容无法在A5页面中完整显示时必须换行，所有内容都要完整展示，不得截断或省略",
-          "字段只映射到模板实际存在且语义明确的列",
+          "只强制填写requiredColumns中用户勾选的列；未勾选列保留模板结构但不得标记为必填",
+          "字段只映射到模板实际存在、用户已选择且语义明确的列",
           "模板字段存在数据验证或允许值范围时，输出值必须严格属于该范围，尤其是类型字段",
           "分析全部发票；records必须为每张发票返回一条记录，并完整提供模板所需的标准字段和自定义列内容",
           "模板中无法映射到标准字段的明细列，使用records.cells按列号填写，不允许因为字段不在allowedFields中而遗漏",
@@ -140,6 +152,7 @@ export default async function handler(req, res) {
           "确实无法从发票确认的信息填写“未识别”，不得留空，也不得编造金额、号码、日期、单位或行程",
         ],
         template: compactTemplate,
+        requiredColumns,
         invoices,
       }),
     },
@@ -174,7 +187,7 @@ export default async function handler(req, res) {
           {
             role: "system",
             content:
-              "你是专业的Excel报销明细表设计与内容分析器。你会同时阅读模板的结构化数据和视觉预览，理解标题、表头、数据区、字体、列宽、行高、合并单元格和打印范围。输出填写及A5分页计划，不重新设计用户模板。必须完整填写用户模板：每张发票对应一条records记录，所有需要填写的明细列都必须有内容；标准字段写入values，自定义列写入cells，非明细填写区域写入templateCells。不得遗漏模板列。每页必须清晰可读；宽表优先A5横向，按合理行数分页并重复标题和表头。输出内容无法在A5页面中完整展示时必须换行，确保全部展示。必须区分invoiceType（普票、专票、火车票、高铁票等票据类型）和expenseCategory（交通费、办公费、差旅费等费用类别）。模板中的类型、类别或科目设置了允许值范围时，必须从该范围选择。只能从发票中提取或合理归纳内容，确实无法确认时填写“未识别”，绝不编造金额、号码、日期、单位或行程。",
+              "你是专业的Excel报销明细表设计与内容分析器。你会同时阅读模板的结构化数据和视觉预览，理解标题、表头、数据区、字体、列宽、行高、合并单元格和打印范围。输出单页A5填写计划，不重新设计用户模板。所有内容必须完整保存在一张A5横向页面内，不得分页；无法完整显示的内容必须换行。用户通过requiredColumns选择必填列，你只强制填写这些列：每张发票对应一条records记录，标准字段写入values，自定义列写入cells。未选择列保留模板结构但不强制填值。对必填列不得遗漏内容。连续记录中语义相同且适合合并的列写入mergeColumns；发票号码、金额、日期、车次等逐票信息不得合并。必须区分invoiceType（票据类型）和expenseCategory（费用类别）。模板字段有允许值范围时必须从该范围选择。只能从发票中提取或合理归纳内容，确实无法确认时填写“未识别”，绝不编造。",
           },
           {
             role: "user",
@@ -195,10 +208,8 @@ export default async function handler(req, res) {
                 firstDataRow: { type: "integer", minimum: 2, maximum: 200 },
                 styleSourceRow: { type: "integer", minimum: 1, maximum: 200 },
                 lastColumn: { type: "integer", minimum: 1, maximum: 80 },
-                rowsPerPage: { type: "integer", minimum: 4, maximum: 24 },
                 mappings: {
                   type: "array",
-                  minItems: 2,
                   maxItems: 15,
                   items: {
                     type: "object",
@@ -209,6 +220,11 @@ export default async function handler(req, res) {
                     },
                     required: ["field", "column"],
                   },
+                },
+                mergeColumns: {
+                  type: "array",
+                  maxItems: 30,
+                  items: { type: "integer", minimum: 1, maximum: 80 },
                 },
                 templateCells: {
                   type: "array",
@@ -271,8 +287,8 @@ export default async function handler(req, res) {
                 "firstDataRow",
                 "styleSourceRow",
                 "lastColumn",
-                "rowsPerPage",
                 "mappings",
+                "mergeColumns",
                 "templateCells",
                 "records",
                 "confidence",

@@ -39,6 +39,8 @@ const els = {
   detailTemplateBlock: document.querySelector("#detailTemplateBlock"),
   detailTemplateInput: document.querySelector("#detailTemplateInput"),
   detailTemplateName: document.querySelector("#detailTemplateName"),
+  detailColumns: document.querySelector("#detailColumns"),
+  detailColumnList: document.querySelector("#detailColumnList"),
   detailExportButton: document.querySelector("#detailExportButton"),
   detailExportButtonText: document.querySelector("#detailExportButtonText"),
   detailDownloadButton: document.querySelector("#detailDownloadButton"),
@@ -62,6 +64,7 @@ const state = {
   },
   exportDetails: false,
   detailTemplate: null,
+  detailRequiredColumns: [],
   detailOutput: null,
   aiAvailable: null,
   exportUrl: null,
@@ -191,6 +194,7 @@ function updateControls() {
   els.detailExportButton.disabled =
     !state.exportDetails ||
     !state.detailTemplate ||
+    !state.detailRequiredColumns.length ||
     !state.files.some((file) => !file.isDemo);
   els.detailDownloadButton.disabled = !state.detailOutput;
   if (state.exportDetails && !state.detailOutput) {
@@ -741,13 +745,14 @@ function getDetailInvoiceRows() {
     }));
 }
 
-async function requestDetailPlan(template, templateImages, invoiceRows) {
+async function requestDetailPlan(template, templateImages, invoiceRows, requiredColumns) {
   const response = await fetch("/api/detail-plan", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       template,
       templateImages,
+      requiredColumns,
       invoices: invoiceRows.slice(0, 80),
     }),
   });
@@ -770,11 +775,19 @@ async function generateDetailWorkbook() {
   if (!invoiceRows.length) throw new Error("演示发票不写入明细表，请先上传真实发票");
   const templateBytes = state.detailTemplate.bytes.slice(0);
   const inspection = await inspectDetailTemplate(templateBytes);
+  const requiredColumns = state.detailRequiredColumns.slice();
+  if (!requiredColumns.length) throw new Error("请至少选择一个必填列");
   const templateImages = inspection.previewModels.map((model) => ({
     sheetName: model.sheetName,
     dataUrl: createDetailPreviewCanvas(model).toDataURL("image/jpeg", 0.82),
   }));
-  const plan = await requestDetailPlan(inspection.snapshot, templateImages, invoiceRows);
+  const plan = await requestDetailPlan(
+    inspection.snapshot,
+    templateImages,
+    invoiceRows,
+    requiredColumns,
+  );
+  plan.requiredColumns = requiredColumns;
   const { bytes, previews } = await fillDetailWorkbook(
     templateBytes,
     invoiceRows,
@@ -933,15 +946,41 @@ els.detailTemplateInput.addEventListener("change", async (event) => {
     event.target.value = "";
     return;
   }
+  const bytes = await file.arrayBuffer();
+  const { inspectDetailTemplate } = await import("./detail-workbook.js");
+  const inspection = await inspectDetailTemplate(bytes.slice(0));
   state.detailTemplate = {
     name: file.name,
-    bytes: await file.arrayBuffer(),
+    bytes,
   };
+  state.detailRequiredColumns = inspection.selectableColumns.columns;
+  els.detailColumnList.innerHTML = state.detailRequiredColumns
+    .map(
+      (item) =>
+        `<label><input type="checkbox" data-column="${item.column}" checked /><span>${escapeHtml(item.label)}</span></label>`,
+    )
+    .join("");
+  els.detailColumns.hidden = state.detailRequiredColumns.length === 0;
   invalidateDetailOutput();
   els.detailTemplateName.textContent = file.name;
   clearGeneratedDownload();
   rebuildPages();
   showToast("明细表模板已读取");
+});
+els.detailColumnList.addEventListener("change", () => {
+  const allColumns = state.detailTemplate
+    ? Array.from(els.detailColumnList.querySelectorAll("input")).map((input) => ({
+        column: Number(input.dataset.column),
+        label: input.parentElement.querySelector("span")?.textContent || "",
+        checked: input.checked,
+      }))
+    : [];
+  state.detailRequiredColumns = allColumns
+    .filter((item) => item.checked)
+    .map(({ column, label }) => ({ column, label }));
+  invalidateDetailOutput();
+  clearGeneratedDownload();
+  rebuildPages();
 });
 els.detailExportButton.addEventListener("click", handleGenerateDetail);
 els.detailDownloadButton.addEventListener("click", downloadDetailWorkbook);

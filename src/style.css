@@ -740,6 +740,52 @@ h2 {
   font-size: 8px;
 }
 
+.detail-columns {
+  margin-top: 9px;
+  padding: 9px;
+  border: 1px solid #dce5df;
+  border-radius: 8px;
+  background: #f8faf9;
+}
+
+.detail-columns > strong {
+  display: block;
+  margin-bottom: 7px;
+  color: #59685f;
+  font-size: 9px;
+}
+
+.detail-columns > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.detail-columns label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border: 1px solid #d3ddd6;
+  border-radius: 6px;
+  color: #647168;
+  background: white;
+  cursor: pointer;
+  font-size: 8px;
+}
+
+.detail-columns label:has(input:checked) {
+  border-color: #80a38f;
+  color: var(--green);
+  background: #edf6f1;
+}
+
+.detail-columns input {
+  width: 11px;
+  height: 11px;
+  accent-color: var(--green);
+}
+
 .detail-export-button,
 .detail-download-button {
   width: 100%;
