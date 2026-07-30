@@ -102,6 +102,31 @@
             </label>
           </fieldset>
 
+          <fieldset class="copy-fieldset">
+            <legend>各类型导出份数</legend>
+            <div class="copy-grid">
+              <label><span>普票</span><input data-copy-type="ordinary" type="number" min="0" max="9" value="1" /><small>份</small></label>
+              <label><span>专票</span><input data-copy-type="special" type="number" min="0" max="9" value="2" /><small>份</small></label>
+              <label><span>火车票</span><input data-copy-type="train" type="number" min="0" max="9" value="2" /><small>份</small></label>
+              <label><span>高铁票</span><input data-copy-type="highSpeed" type="number" min="0" max="9" value="2" /><small>份</small></label>
+            </div>
+          </fieldset>
+
+          <div class="detail-config">
+            <label class="toggle-row">
+              <span><strong>同时导出明细表</strong><small>按模板表头自动填写发票内容</small></span>
+              <input id="detailToggle" type="checkbox" />
+              <i aria-hidden="true"></i>
+            </label>
+            <div class="template-block" id="detailTemplateBlock" hidden>
+              <label class="template-upload" for="detailTemplateInput">
+                <input id="detailTemplateInput" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
+                <span>上传 Excel 模板</span>
+              </label>
+              <small id="detailTemplateName">支持识别“发票号码、日期、金额、车次”等表头</small>
+            </div>
+          </div>
+
           <div class="export-details">
             <div><span>纸张</span><strong>A4 · 纵向</strong></div>
             <div><span>排版</span><strong>每页 2 张</strong></div>
@@ -122,7 +147,7 @@
           <button class="manual-button" id="manualButton" type="button" hidden>
             手动下载 PDF
           </button>
-          <p class="export-hint">所有生成步骤均在当前浏览器内完成</p>
+          <p class="export-hint">识别、排版与明细表填写均在当前浏览器内完成</p>
         </aside>
       </main>
     </div>

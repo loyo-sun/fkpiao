@@ -2,6 +2,7 @@ import "./style.css";
 import { PDFDocument, rgb } from "pdf-lib";
 import { getDocument, GlobalWorkerOptions } from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import { analyzePdf, extractInvoiceFields, INVOICE_TYPES } from "./invoice-analysis.js";
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -33,6 +34,11 @@ const els = {
   currentPage: document.querySelector("#currentPage"),
   totalPages: document.querySelector("#totalPages"),
   exportPageCount: document.querySelector("#exportPageCount"),
+  copyCountInputs: document.querySelectorAll("[data-copy-type]"),
+  detailToggle: document.querySelector("#detailToggle"),
+  detailTemplateBlock: document.querySelector("#detailTemplateBlock"),
+  detailTemplateInput: document.querySelector("#detailTemplateInput"),
+  detailTemplateName: document.querySelector("#detailTemplateName"),
   exportButton: document.querySelector("#exportButton"),
   exportButtonText: document.querySelector("#exportButtonText"),
   manualButton: document.querySelector("#manualButton"),
@@ -45,6 +51,14 @@ const state = {
   pages: [],
   currentSheet: 0,
   mode: "color",
+  copyCounts: {
+    ordinary: 1,
+    special: 2,
+    train: 2,
+    highSpeed: 2,
+  },
+  exportDetails: false,
+  detailTemplate: null,
   exportUrl: null,
   renderToken: 0,
 };
@@ -56,6 +70,19 @@ function createDemoInvoice(index) {
     sizeLabel: index === 1 ? "184 KB · 1 页" : "216 KB · 1 页",
     isDemo: true,
     pageCount: 1,
+    invoiceType: index === 1 ? "ordinary" : "special",
+    confidence: 1,
+    reason: "演示数据",
+    details: {
+      fileName: index === 1 ? "示例发票_办公用品.pdf" : "示例发票_技术服务.pdf",
+      invoiceType: index === 1 ? "普票" : "专票",
+      invoiceNumber: index === 1 ? "253120000001864921" : "253120000001864936",
+      issueDate: "2026年07月18日",
+      buyerName: "杭州明川科技有限公司",
+      sellerName: "瑞捷机械设备有限公司",
+      totalAmount: index === 1 ? 1286 : 4800,
+      summary: index === 1 ? "办公用品一批" : "设备技术服务费",
+    },
     accent: index === 1 ? "#2f6f5a" : "#9f563f",
     amount: index === 1 ? "¥ 1,286.00" : "¥ 4,800.00",
     number: index === 1 ? "253120000001864921" : "253120000001864936",
@@ -68,9 +95,12 @@ function resetToDemo() {
 }
 
 function rebuildPages() {
-  state.pages = state.files.flatMap((file) =>
-    Array.from({ length: file.pageCount }, (_, pageIndex) => ({ file, pageIndex })),
-  );
+  state.pages = state.files.flatMap((file) => {
+    const copies = state.copyCounts[file.invoiceType] ?? 1;
+    return Array.from({ length: copies }, (_, copyIndex) =>
+      Array.from({ length: file.pageCount }, (_, pageIndex) => ({ file, pageIndex, copyIndex })),
+    ).flat();
+  });
   const sheets = Math.max(1, Math.ceil(state.pages.length / 2));
   state.currentSheet = Math.min(state.currentSheet, sheets - 1);
   renderFileList();
@@ -83,14 +113,36 @@ function renderFileList() {
   for (const file of state.files) {
     const li = document.createElement("li");
     li.className = "file-item";
+    const confidenceNote =
+      file.confidence < 0.6
+        ? `<small class="recognition-warning" title="${escapeHtml(file.reason)}">请确认识别结果</small>`
+        : `<small title="${escapeHtml(file.reason)}">${file.sizeLabel}</small>`;
     li.innerHTML = `
       <span class="file-icon">PDF</span>
       <span class="file-copy">
         <strong title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</strong>
-        <small>${file.sizeLabel}</small>
+        ${confidenceNote}
+        <select class="invoice-type-select" aria-label="${escapeHtml(file.name)} 的发票类型">
+          ${Object.entries(INVOICE_TYPES)
+            .map(
+              ([value, label]) =>
+                `<option value="${value}"${file.invoiceType === value ? " selected" : ""}>${label}</option>`,
+            )
+            .join("")}
+        </select>
       </span>
       <button class="remove-file" type="button" aria-label="移除 ${escapeHtml(file.name)}">×</button>
     `;
+    li.querySelector(".invoice-type-select").addEventListener("change", (event) => {
+      file.invoiceType = event.target.value;
+      file.confidence = 1;
+      file.reason = "用户手动选择";
+      file.details = extractInvoiceFields(file.analysisText || "", file.name, {
+        type: file.invoiceType,
+      });
+      clearGeneratedDownload();
+      rebuildPages();
+    });
     li.querySelector(".remove-file").addEventListener("click", () => removeFile(file.id));
     els.fileList.appendChild(li);
   }
@@ -146,6 +198,7 @@ async function addFiles(fileList) {
     try {
       const bytes = await file.arrayBuffer();
       const pdf = await loadLocalPdf(new Uint8Array(bytes.slice(0))).promise;
+      const analysis = await analyzePdf(pdf, file.name);
       newFiles.push({
         id: `${Date.now()}-${crypto.randomUUID()}`,
         name: file.name,
@@ -154,6 +207,11 @@ async function addFiles(fileList) {
         bytes,
         pdf,
         pageCount: pdf.numPages,
+        invoiceType: analysis.type,
+        confidence: analysis.confidence,
+        reason: analysis.reason,
+        analysisText: analysis.text,
+        details: analysis.details,
       });
     } catch (error) {
       console.error(error);
@@ -167,7 +225,12 @@ async function addFiles(fileList) {
     state.currentSheet = 0;
     clearGeneratedDownload();
     rebuildPages();
-    showToast(`已加入 ${newFiles.length} 个 PDF`);
+    const uncertainCount = newFiles.filter((file) => file.confidence < 0.6).length;
+    showToast(
+      uncertainCount
+        ? `已加入 ${newFiles.length} 个 PDF，${uncertainCount} 个类型需要确认`
+        : `已识别 ${newFiles.length} 个 PDF`,
+    );
   }
   els.fileInput.value = "";
 }
@@ -443,6 +506,38 @@ function triggerDownload(url) {
   anchor.remove();
 }
 
+function triggerBlobDownload(blob, fileName) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function exportDetailWorkbook() {
+  if (!state.exportDetails) return;
+  if (!state.detailTemplate) throw new Error("请先上传明细表模板");
+  const { detailOutputName, fillDetailWorkbook } = await import("./detail-workbook.js");
+  const invoiceRows = state.files
+    .filter((file) => !file.isDemo)
+    .map((file) => ({
+      ...file.details,
+      invoiceType: INVOICE_TYPES[file.invoiceType],
+    }));
+  if (!invoiceRows.length) throw new Error("演示发票不写入明细表，请先上传真实发票");
+
+  const bytes = await fillDetailWorkbook(state.detailTemplate.bytes.slice(0), invoiceRows);
+  triggerBlobDownload(
+    new Blob([bytes], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    }),
+    detailOutputName(state.detailTemplate.name),
+  );
+}
+
 function clearGeneratedDownload() {
   if (state.exportUrl) URL.revokeObjectURL(state.exportUrl);
   state.exportUrl = null;
@@ -460,12 +555,13 @@ async function exportPdf() {
     const bytes = await createOutputPdf();
     state.exportUrl = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
     triggerDownload(state.exportUrl);
+    await exportDetailWorkbook();
     els.successCard.hidden = false;
     els.manualButton.hidden = false;
-    showToast("PDF 已生成，下载已开始");
+    showToast(state.exportDetails ? "PDF 和明细表已生成" : "PDF 已生成，下载已开始");
   } catch (error) {
     console.error(error);
-    showToast("生成失败，请检查 PDF 后重试");
+    showToast(error.message || "生成失败，请检查文件后重试");
   } finally {
     els.exportButton.disabled = state.pages.length === 0;
     els.exportButtonText.textContent = "重新生成并下载";
@@ -520,6 +616,37 @@ document.querySelectorAll('input[name="colorMode"]').forEach((radio) => {
     clearGeneratedDownload();
     renderPreview();
   });
+});
+els.copyCountInputs.forEach((input) => {
+  input.addEventListener("change", (event) => {
+    const type = event.target.dataset.copyType;
+    const count = Math.max(0, Math.min(9, Number(event.target.value) || 0));
+    event.target.value = String(count);
+    state.copyCounts[type] = count;
+    clearGeneratedDownload();
+    rebuildPages();
+  });
+});
+els.detailToggle.addEventListener("change", (event) => {
+  state.exportDetails = event.target.checked;
+  els.detailTemplateBlock.hidden = !state.exportDetails;
+  clearGeneratedDownload();
+});
+els.detailTemplateInput.addEventListener("change", async (event) => {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  if (!file.name.toLowerCase().endsWith(".xlsx")) {
+    showToast("请选择 .xlsx 格式的明细表模板");
+    event.target.value = "";
+    return;
+  }
+  state.detailTemplate = {
+    name: file.name,
+    bytes: await file.arrayBuffer(),
+  };
+  els.detailTemplateName.textContent = file.name;
+  clearGeneratedDownload();
+  showToast("明细表模板已读取");
 });
 els.exportButton.addEventListener("click", exportPdf);
 els.manualButton.addEventListener("click", () => {
